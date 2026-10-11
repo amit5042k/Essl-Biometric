@@ -25,7 +25,7 @@ A Node.js attendance management system for **eSSL Classic** (K21, K30, X990, MB1
 
 ## Requirements
 
-- Node.js **22 or newer** (Windows, Linux or macOS)
+- Node.js **20.12 or newer** (Windows, Linux or macOS)
 - Network access from the server to the devices (pull mode) or from the devices to the server (push mode)
 
 ## Install and run
@@ -39,7 +39,57 @@ npm start
 Open `http://<server-ip>:3000` and sign in with `ADMIN_USER` / `ADMIN_PASSWORD` (default `admin` / `admin123`
 if not set; change it under **Settings**). The admin account is created only on the first start.
 
-To keep it running as a service, use e.g. `pm2 start src/server.js --name essl`, or NSSM on Windows.
+To keep it running as a service, use e.g. `pm2 start app.js --name essl`, or NSSM on Windows.
+
+## Deploying on GoDaddy
+
+**Important:** a server on the internet cannot open connections to devices inside your office LAN. When the app is
+hosted on GoDaddy, use **ADMS / Cloud (push)** mode on the devices. TCP/IP (pull) mode only works from a hosted server
+if each device is reachable from the internet (port forwarding on the office router, or a VPN), which is not
+recommended.
+
+### Option A – cPanel shared hosting (only if your cPanel has "Setup Node.js App")
+
+1. In cPanel open **Setup Node.js App → Create Application**:
+   - Node.js version: **20** or newer (the highest offered)
+   - Application mode: Production
+   - Application root: e.g. `essl-attendance`
+   - Application URL: a domain or subdomain, e.g. `attendance.yourcompany.com`, at its **root** (no sub-path) —
+     the devices always call `/iclock/...`
+   - Application startup file: `app.js`
+2. Upload the project files (everything except `node_modules/` and `data/`) into the application root with
+   File Manager or FTP.
+3. In the app's page add environment variables: `ADMIN_PASSWORD`, `ADMS_TIMEZONE=330`, and
+   `DB_PATH=/home/<cpanel-user>/essl-data/attendance.db` (a folder outside `public_html`).
+4. Click **Run NPM Install**, then **Restart**.
+5. Do **not** enable "Force HTTPS redirect" for this subdomain: most terminals send ADMS data over plain HTTP on
+   port 80. You can still open the web UI with `https://`.
+6. On each device: **Comm. → Cloud Server Setting** → server address `attendance.yourcompany.com`, port `80`,
+   HTTPS off, then approve the device on the **Devices** page.
+
+Shared hosting stops idle Node apps; that is fine for push mode because each device upload wakes it up. If
+**Run NPM Install** fails while building `better-sqlite3`, the plan cannot run native modules — use Option B.
+
+### Option B – GoDaddy VPS / dedicated server (recommended)
+
+```bash
+# Ubuntu, as a sudo user
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs build-essential nginx
+git clone <this repo> essl-attendance && cd essl-attendance
+npm ci --omit=dev
+cp .env.example .env && nano .env        # set ADMIN_PASSWORD, PORT=3000
+sudo npm i -g pm2 && pm2 start app.js --name essl && pm2 save && pm2 startup
+```
+
+Put nginx in front (`proxy_pass http://127.0.0.1:3000;` for `server_name attendance.yourcompany.com`), keep
+plain HTTP on port 80 working for `/iclock/` and add HTTPS for the UI if you like. Open ports 80/443 in the
+firewall. Point the devices at the domain, port 80.
+
+### Backups
+
+All data is in the single SQLite file (`DB_PATH`, default `data/attendance.db`). Copy it regularly (stop the app or
+use `sqlite3 attendance.db ".backup backup.db"`).
 
 ## Connecting devices
 
@@ -108,7 +158,7 @@ endpoints, pull sync through the HTTP API and the attendance rules.
 
 ```
 src/
-  server.js              Express app + scheduler start-up
+  server.js              Express app + scheduler start-up (app.js at the root starts it)
   config.js              settings from environment / .env
   db.js                  SQLite schema
   auth.js                admin login and sessions

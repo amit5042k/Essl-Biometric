@@ -27,10 +27,12 @@ function createApp({ db, cfg = config, logger = console }) {
   return { app, devices };
 }
 
-if (require.main === module) {
+function start() {
   const db = open(config.dbPath);
   const { app, devices } = createApp({ db });
   devices.start();
+  // Under Phusion Passenger (cPanel "Setup Node.js App") the port is managed by
+  // Passenger and whatever we pass to listen() is ignored.
   const server = app.listen(config.port, config.host, () => {
     console.log(`eSSL Attendance running on http://localhost:${config.port}`);
     console.log(`ADMS devices: set Cloud Server to this machine's IP, port ${config.port}`);
@@ -45,6 +47,9 @@ if (require.main === module) {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  return server;
 }
 
-module.exports = { createApp };
+if (require.main === module) start();
+
+module.exports = { createApp, start };
