@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>eSSL Attendance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="loginForm" class="card login-card">
+      <h1>eSSL Attendance</h1>
+      <p class="muted">Classic &amp; Orcus biometric devices</p>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <p id="loginError" class="error"></p>
+    </form>
+  </div>
+
+  <div id="shell" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand">eSSL Attendance</div>
+      <nav id="nav">
+        <a href="#dashboard">Dashboard</a>
+        <a href="#devices">Devices</a>
+        <a href="#employees">Employees</a>
+        <a href="#punches">Punch Logs</a>
+        <a href="#daily">Daily Report</a>
+        <a href="#monthly">Monthly Muster</a>
+        <a href="#leaves">Leaves</a>
+        <a href="#shifts">Shifts</a>
+        <a href="#holidays">Holidays</a>
+        <a href="#settings">Settings</a>
+      </nav>
+      <button id="logout" class="btn ghost">Sign out</button>
+    </aside>
+    <main id="view" class="view"></main>
+  </div>
+
+  <dialog id="modal">
+    <form method="dialog" id="modalForm" class="modal-form">
+      <h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <p id="modalError" class="error"></p>
+      <div class="actions">
+        <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+        <button value="ok" id="modalOk" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
