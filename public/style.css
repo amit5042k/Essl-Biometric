@@ -67,7 +67,12 @@ table { border-collapse: collapse; width: 100%; }
 th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: top; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); background: var(--panel); position: sticky; top: 0; }
 tr:last-child td { border-bottom: 0; }
-td.actions { display: flex; gap: 4px; flex-wrap: wrap; }
+td.actions { white-space: normal; }
+tr.info-row td { border-bottom: 0; }
+tr.action-row td { padding-top: 0; }
+/* width:0 + min-width:100% keeps the buttons from widening table columns */
+.btns { width: 0; min-width: 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+td.actions .btn { margin: 0 4px 4px 0; display: inline-block; }
 .muster td, .muster th { padding: 4px 5px; text-align: center; font-size: 12px; }
 .muster td:nth-child(-n+2), .muster th:nth-child(-n+2) { text-align: left; }
 

@@ -110,9 +110,11 @@ function evaluateDay({ date, shift, punches, isHoliday, holidayName, leave, isTo
   }
 
   if (isHoliday || isWeeklyOff) {
-    r.remark = isHoliday ? `Worked on holiday${holidayName ? ` (${holidayName})` : ''}` : 'Worked on weekly off';
     if (shift.ot_enabled) r.otMin = r.workMin;
+    r.remark = isHoliday ? `Worked on holiday${holidayName ? ` (${holidayName})` : ''}` : 'Worked on weekly off';
   }
+  // Punch times carry seconds; report whole minutes.
+  for (const k of ['workMin', 'lateMin', 'earlyMin', 'otMin']) r[k] = Math.round(r[k]);
   return r;
 }
 

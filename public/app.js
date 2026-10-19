@@ -6,7 +6,10 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const pad = (n) => String(n).padStart(2, '0');
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const thisMonth = () => today().slice(0, 7);
-const dur = (m) => (m ? `${pad(Math.floor(m / 60))}:${pad(m % 60)}` : '');
+const dur = (m) => {
+  const r = Math.round(m || 0);
+  return r ? `${pad(Math.floor(r / 60))}:${pad(r % 60)}` : '';
+};
 const STATUS = { P: 'Present', A: 'Absent', HD: 'Half Day', MP: 'Missed Punch', WO: 'Weekly Off', HO: 'Holiday', L: 'Leave' };
 const PUNCH = { 0: 'In', 1: 'Out', 2: 'Break Out', 3: 'Break In', 4: 'OT In', 5: 'OT Out' };
 const VERIFY = { 0: 'Password', 1: 'Finger', 2: 'Card', 3: 'Password', 4: 'Card', 15: 'Face', 25: 'Palm' };
@@ -64,8 +67,9 @@ function table(headers, rows, cls = '') {
  * Opens a form modal. fields: [{name,label,type,options,value,required,full,help}]
  * Resolves with the form values, or null when cancelled.
  */
-function formModal(title, fields, onSubmit, okLabel = 'Save') {
+function formModal(title, fields, onSubmit, okLabel = 'Save', { cancel = true } = {}) {
   const dlg = $('#modal');
+  $('#modalCancel').classList.toggle('hidden', !cancel);
   $('#modalTitle').textContent = title;
   $('#modalOk').textContent = okLabel;
   $('#modalError').textContent = '';
@@ -119,7 +123,7 @@ function formModal(title, fields, onSubmit, okLabel = 'Save') {
 }
 
 function showDetails(title, html) {
-  return formModal(title, [{ type: 'html', html }], null, 'Close');
+  return formModal(title, [{ type: 'html', html }], null, 'Close', { cancel: false });
 }
 
 // -------------------------------------------------------------------- auth
@@ -222,14 +226,14 @@ views.devices = async (el) => {
     <div class="toolbar"><h1>Devices</h1><span class="spacer"></span>
       <button class="btn" id="testBtn">Test connection</button>
       <button class="btn primary" id="addBtn">Add device</button></div>
-    ${table(['Name', 'Mode', 'Address / SN', 'Firmware', 'Users', 'Punches', 'Last sync', 'Status', ''], list.map((d) => `<tr>
+    ${table(['Name', 'Mode', 'Address / SN', 'Firmware', 'Users', 'Punches', 'Last sync', 'Status'], list.map((d) => `<tr class="info-row">
       <td><b>${esc(d.name)}</b><br><span class="muted">${esc(d.model || '')} ${esc(d.location || '')}</span></td>
       <td>${d.mode === 'push' ? 'ADMS' : `TCP/IP ${esc(d.transport?.toUpperCase())}`}</td>
       <td>${d.mode === 'pull' ? `${esc(d.ip)}:${esc(d.port)}` : ''}<br><span class="muted">${esc(d.serial_number || '')}</span></td>
       <td>${esc(d.firmware || '')}</td><td>${d.user_count ?? ''}</td><td>${d.punch_count}</td>
       <td>${esc(d.last_sync || '')}</td>
       <td>${!d.enabled ? '<span class="warn">Disabled</span>' : d.last_error ? `<span class="bad">${esc(d.last_error)}</span>` : '<span class="ok">OK</span>'}${d.pending_commands ? `<br><span class="muted">${d.pending_commands} queued cmd</span>` : ''}</td>
-      <td class="actions" data-id="${d.id}" data-mode="${d.mode}">
+      </tr><tr class="action-row"><td colspan="8"><div class="actions btns" data-id="${d.id}" data-mode="${d.mode}">
         <button class="btn sm" data-a="sync">${d.mode === 'push' ? 'Request upload' : 'Sync now'}</button>
         <button class="btn sm" data-a="edit">Edit</button>
         <button class="btn sm" data-a="upload">Upload employees</button>
@@ -238,7 +242,7 @@ views.devices = async (el) => {
         <button class="btn sm" data-a="restart">Restart</button>
         <button class="btn sm danger" data-a="clear">Clear logs</button>
         <button class="btn sm danger" data-a="delete">Delete</button>
-      </td></tr>`))}`;
+      </div></td></tr>`))}`;
 
   $('#addBtn').onclick = async () => {
     const r = await formModal('Add device', deviceFields(), (v) => post('/devices', v));
@@ -252,7 +256,7 @@ views.devices = async (el) => {
     if (r) showDetails('Device found', `<pre>${esc(JSON.stringify(r, null, 2))}</pre>`);
   };
 
-  el.querySelectorAll('td.actions button').forEach((btn) => {
+  el.querySelectorAll('.btns button').forEach((btn) => {
     btn.onclick = async () => {
       const { id, mode } = btn.parentElement.dataset;
       const dev = list.find((x) => String(x.id) === id);

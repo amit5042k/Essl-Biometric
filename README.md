@@ -23,6 +23,11 @@ A Node.js attendance management system for **eSSL Classic** (K21, K30, X990, MB1
   P/A/HD/MP/WO/HO/L codes and payable days, per-employee report. All exportable to CSV (opens in Excel).
 - Single admin login (scrypt-hashed password, HTTP-only session cookie). SQLite storage, no external database.
 
+## Guide
+
+A complete illustrated guide (features, screen tour, attendance rules, setup, what is done and what is left) is in
+[docs/eSSL-Attendance-Guide.pdf](docs/eSSL-Attendance-Guide.pdf).
+
 ## Requirements
 
 - Node.js **20.12 or newer** (Windows, Linux or macOS)
