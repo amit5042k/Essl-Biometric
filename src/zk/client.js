@@ -267,6 +267,17 @@ class ZKClient {
     return Buffer.concat(parts);
   }
 
+  /** Uploads a large payload: PREPARE_DATA(size), then DATA chunks. */
+  async _sendWithBuffer(buf) {
+    await this._command(C.CMD_FREE_DATA);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(buf.length, 0);
+    this._expectOk(await this._command(C.CMD_PREPARE_DATA, size), 'Prepare upload');
+    for (let start = 0; start < buf.length; start += 1024) {
+      this._expectOk(await this._command(C.CMD_DATA, buf.subarray(start, start + 1024)), 'Upload chunk');
+    }
+  }
+
   // ------------------------------------------------------------- device info
 
   getOption(name) {
@@ -461,6 +472,83 @@ class ZKClient {
     });
   }
 
+  // ------------------------------------------------------- finger templates
+
+  /**
+   * Reads every fingerprint template stored on the device:
+   * [{ uid, fid, valid, template: Buffer }]
+   */
+  getTemplates() {
+    return this._exclusive(async () => {
+      const raw = await this._readWithBuffer(C.CMD_DB_RRQ, C.FCT_FINGERTMP);
+      if (raw.length < 4) return [];
+      const total = raw.readUInt32LE(0);
+      const data = raw.subarray(4, 4 + total);
+      const out = [];
+      let off = 0;
+      while (off + 6 <= data.length) {
+        const size = data.readUInt16LE(off);
+        if (size < 6 || off + size > data.length) break;
+        out.push({
+          uid: data.readUInt16LE(off + 2),
+          fid: data.readInt8(off + 4),
+          valid: data.readInt8(off + 5),
+          template: Buffer.from(data.subarray(off + 6, off + size)),
+        });
+        off += size;
+      }
+      return out;
+    });
+  }
+
+  /**
+   * Writes users together with their fingerprint templates in one batch.
+   * Call getUsers() first so the device's user record format is known.
+   * @param {{user:{uid:number,userId:string,name?:string,privilege?:number,password?:string,card?:number},
+   *          fingers:{fid:number,valid?:number,template:Buffer}[]}[]} entries
+   */
+  saveUserTemplates(entries) {
+    const size = this.userPacketSize || 72;
+    const users = [];
+    const table = [];
+    const fingers = [];
+    let offset = 0;
+    for (const { user, fingers: list } of entries) {
+      users.push(size === 28 ? packUser29(user) : packUser73(user));
+      for (const f of list) {
+        const t = Buffer.alloc(8);
+        t.writeInt8(2, 0);
+        t.writeUInt16LE(user.uid, 1);
+        t.writeUInt8(0x10 + f.fid, 3);
+        t.writeUInt32LE(offset, 4);
+        table.push(t);
+        const rec = Buffer.alloc(2 + f.template.length);
+        rec.writeUInt16LE(f.template.length, 0);
+        f.template.copy(rec, 2);
+        fingers.push(rec);
+        offset += rec.length;
+      }
+    }
+    const upack = Buffer.concat(users);
+    const tpack = Buffer.concat(table);
+    const fpack = Buffer.concat(fingers);
+    const head = Buffer.alloc(12);
+    head.writeUInt32LE(upack.length, 0);
+    head.writeUInt32LE(tpack.length, 4);
+    head.writeUInt32LE(fpack.length, 8);
+
+    return this._exclusive(async () => {
+      await this._sendWithBuffer(Buffer.concat([head, upack, tpack, fpack]));
+      const args = Buffer.alloc(8);
+      args.writeUInt32LE(12, 0);
+      args.writeUInt16LE(0, 4);
+      args.writeUInt16LE(8, 6);
+      this._expectOk(await this._command(C.CMD_SAVE_USERTEMPS, args), 'Save templates');
+      await this._command(C.CMD_REFRESHDATA);
+      return true;
+    });
+  }
+
   // -------------------------------------------------------------- attendance
 
   /**
@@ -522,6 +610,37 @@ class ZKClient {
       return true;
     });
   }
+}
+
+/** 73-byte user record used inside template uploads (newer firmware). */
+function packUser73(u) {
+  const b = Buffer.alloc(73);
+  b[0] = 2;
+  b.writeUInt16LE(u.uid, 1);
+  b[3] = Number(u.privilege) || 0;
+  U.fixedField(u.password || '', 8).copy(b, 4);
+  Buffer.from(u.name || '', 'utf8').copy(b, 12, 0, 24);
+  b.writeUInt32LE(Number(u.card) >>> 0, 36);
+  b[40] = 1;
+  U.fixedField(u.groupId || '1', 7).copy(b, 41);
+  U.fixedField(u.userId, 24).copy(b, 49);
+  return b;
+}
+
+/** 29-byte user record for older firmware (numeric user ids only). */
+function packUser29(u) {
+  if (!/^\d+$/.test(String(u.userId))) throw new ZKError('This device only supports numeric user IDs');
+  const b = Buffer.alloc(29);
+  b[0] = 2;
+  b.writeUInt16LE(u.uid, 1);
+  b[3] = Number(u.privilege) || 0;
+  U.fixedField(u.password || '', 5).copy(b, 4);
+  U.fixedField(u.name || '', 8).copy(b, 9);
+  b.writeUInt32LE(Number(u.card) >>> 0, 17);
+  b[22] = 1;
+  b.writeInt16LE(0, 23);
+  b.writeUInt32LE(Number(u.userId) >>> 0, 25);
+  return b;
 }
 
 module.exports = { ZKClient, ZKError };

@@ -30,6 +30,7 @@ module.exports = Object.freeze({
   CMD_DATA_WRRQ: 1503,
   CMD_READ_BUFFER: 1504,
 
+  CMD_DB_RRQ: 7,
   CMD_OPTIONS_RRQ: 11,
   CMD_OPTIONS_WRQ: 12,
   CMD_ATTLOG_RRQ: 13,
@@ -41,8 +42,10 @@ module.exports = Object.freeze({
   CMD_GET_FREE_SIZES: 50,
   CMD_GET_TIME: 201,
   CMD_SET_TIME: 202,
+  CMD_SAVE_USERTEMPS: 110,
   CMD_REG_EVENT: 500,
 
+  FCT_FINGERTMP: 2,
   FCT_USER: 5,
 
   // TCP envelope magic: 0x5050 0x7d82 (little endian) followed by payload length

@@ -63,11 +63,14 @@ function createSimulator({
   commKey = 0,
   users = [],
   logs = [],
+  templates = [],
   chunkSize = 300,
 } = {}) {
   const state = {
     users: users.map((u, i) => ({ uid: i + 1, ...u })),
     logs: [...logs],
+    // [{ uid, fid, valid, template: Buffer }]
+    templates: templates.map((t) => ({ valid: 1, ...t })),
     time: null,
   };
 
@@ -76,6 +79,7 @@ function createSimulator({
     let session = 0;
     let authed = !commKey;
     let pending = null; // buffer prepared by DATA_WRRQ
+    let incoming = null; // upload started with PREPARE_DATA
 
     sock.on('error', () => {});
     sock.on('data', (chunk) => {
@@ -100,7 +104,17 @@ function createSimulator({
 
     function buildBuffer(cmd) {
       let body;
-      if (cmd === C.CMD_ATTLOG_RRQ) {
+      if (cmd === C.CMD_DB_RRQ) {
+        body = Buffer.concat(state.templates.map((t) => {
+          const r = Buffer.alloc(6 + t.template.length);
+          r.writeUInt16LE(r.length, 0);
+          r.writeUInt16LE(t.uid, 2);
+          r.writeInt8(t.fid, 4);
+          r.writeInt8(t.valid, 5);
+          t.template.copy(r, 6);
+          return r;
+        }));
+      } else if (cmd === C.CMD_ATTLOG_RRQ) {
         const uidOf = new Map(state.users.map((u) => [u.userId, u.uid]));
         body = Buffer.concat(state.logs.map((l) => encodeLog(l, uidOf.get(l.userId) || 0)));
       } else {
@@ -109,6 +123,38 @@ function createSimulator({
       const head = Buffer.alloc(4);
       head.writeUInt32LE(body.length, 0);
       return Buffer.concat([head, body]);
+    }
+
+    // Mirrors the firmware: [sizes][73-byte users][8-byte index][len+template...]
+    function saveUserTemplates(buf) {
+      const ulen = buf.readUInt32LE(0);
+      const tlen = buf.readUInt32LE(4);
+      const users = buf.subarray(12, 12 + ulen);
+      const table = buf.subarray(12 + ulen, 12 + ulen + tlen);
+      const fpack = buf.subarray(12 + ulen + tlen);
+      for (let off = 0; off + 73 <= users.length; off += 73) {
+        const r = users.subarray(off, off + 73);
+        const u = {
+          uid: r.readUInt16LE(1),
+          privilege: r[3],
+          password: U.cstr(r.subarray(4, 12)),
+          name: U.cstr(r.subarray(12, 36), 'utf8'),
+          card: r.readUInt32LE(36),
+          groupId: U.cstr(r.subarray(41, 48)),
+          userId: U.cstr(r.subarray(49, 73)),
+        };
+        state.users = state.users.filter((x) => x.uid !== u.uid);
+        state.users.push(u);
+      }
+      for (let off = 0; off + 8 <= table.length; off += 8) {
+        const uid = table.readUInt16LE(off + 1);
+        const fid = table[off + 3] - 0x10;
+        const at = table.readUInt32LE(off + 4);
+        const len = fpack.readUInt16LE(at);
+        const template = Buffer.from(fpack.subarray(at + 2, at + 2 + len));
+        state.templates = state.templates.filter((t) => !(t.uid === uid && t.fid === fid));
+        state.templates.push({ uid, fid, valid: 1, template });
+      }
     }
 
     function handle(req) {
@@ -173,6 +219,20 @@ function createSimulator({
         case C.CMD_FREE_DATA:
           pending = null;
           return send(C.CMD_ACK_OK);
+        case C.CMD_PREPARE_DATA:
+          incoming = { size: req.data.readUInt32LE(0), parts: [] };
+          return send(C.CMD_ACK_OK);
+        case C.CMD_DATA:
+          if (!incoming) return send(C.CMD_ACK_ERROR);
+          incoming.parts.push(Buffer.from(req.data));
+          return send(C.CMD_ACK_OK);
+        case C.CMD_SAVE_USERTEMPS: {
+          const buf = Buffer.concat(incoming ? incoming.parts : []);
+          incoming = null;
+          if (buf.length < 12) return send(C.CMD_ACK_ERROR);
+          saveUserTemplates(buf);
+          return send(C.CMD_ACK_OK);
+        }
         case C.CMD_USER_WRQ: {
           const u = decodeUser(req.data);
           state.users = state.users.filter((x) => x.uid !== u.uid);
@@ -229,6 +289,13 @@ if (require.main === module) {
     logs.push({ userId: '102', timestamp: `${day(i)} 14:00:00`, punchState: 1 });
     if (i % 2) logs.push({ userId: '103', timestamp: `${day(i)} 08:55:00`, punchState: 0 });
   }
-  const sim = createSimulator({ users, logs, commKey });
+  // Fake fingerprint templates (random bytes) so biometric copying can be tried.
+  const fake = (seed) => Buffer.from(Array.from({ length: 800 }, (_, i) => (i * 31 + seed * 17) & 0xff));
+  const templates = [
+    { uid: 1, fid: 0, template: fake(1) }, { uid: 1, fid: 1, template: fake(2) },
+    { uid: 2, fid: 0, template: fake(3) },
+    { uid: 3, fid: 5, template: fake(4) }, { uid: 3, fid: 6, template: fake(5) },
+  ];
+  const sim = createSimulator({ users, logs, commKey, templates, serialNumber: process.env.SIM_SERIAL || 'SIMULATOR0001' });
   sim.listen(port).then((p) => console.log(`ZK simulator listening on tcp/${p} (comm key ${commKey})`));
 }

@@ -126,6 +126,23 @@ CREATE TABLE IF NOT EXISTS device_commands (
   completed_at TEXT
 );
 
+-- Fingerprint / face / palm templates captured from devices, so they can be
+-- copied to other devices. kind: 'finger' (ZK FP), 'face' (ADMS FACE) or
+-- 'bio' (ADMS BIODATA, bio_type 1 = finger, 2/9 = face, 8 = palm).
+CREATE TABLE IF NOT EXISTS biometrics (
+  id INTEGER PRIMARY KEY,
+  employee_code TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  bio_type INTEGER NOT NULL DEFAULT 0,
+  idx INTEGER NOT NULL DEFAULT 0,
+  valid INTEGER NOT NULL DEFAULT 1,
+  template TEXT NOT NULL,
+  extra TEXT,
+  source_device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  UNIQUE (employee_code, kind, bio_type, idx)
+);
+
 CREATE TABLE IF NOT EXISTS device_logs (
   id INTEGER PRIMARY KEY,
   device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE,

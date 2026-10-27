@@ -3,6 +3,7 @@
 const express = require('express');
 const P = require('./parser');
 const { savePunches, importDeviceUsers } = require('../services/punches');
+const { saveTemplates } = require('../services/biometrics');
 const T = require('../util/time');
 
 /**
@@ -72,7 +73,7 @@ function createAdmsRouter({ db, config, logger = console }) {
       `Delay=${config.adms.delay}`,
       'TransTimes=00:00;14:05',
       'TransInterval=1',
-      'TransFlag=TransData AttLog OpLog EnrollUser ChgUser',
+      'TransFlag=TransData AttLog OpLog EnrollUser ChgUser EnrollFP ChgFP FACE',
       `TimeZone=${config.adms.timeZone}`,
       'Realtime=1',
       'Encrypt=None',
@@ -96,9 +97,14 @@ function createAdmsRouter({ db, config, logger = console }) {
       }
       return text(res, `OK: ${logs.length}`);
     }
-    if (table === 'OPERLOG' || table === 'USERINFO') {
+    if (['OPERLOG', 'USERINFO', 'BIODATA', 'FINGERTMP', 'FACE'].includes(table)) {
       const { users, count } = P.parseOperLog(body);
-      if (users.length) importDeviceUsers(db, users);
+      if (users.length && (table === 'OPERLOG' || table === 'USERINFO')) importDeviceUsers(db, users);
+      const templates = P.parseTemplates(body, table);
+      if (templates.length) {
+        saveTemplates(db, device.id, templates);
+        db.prepare('INSERT INTO device_logs (device_id, message) VALUES (?, ?)').run(device.id, `Received ${templates.length} biometric template(s)`);
+      }
       if (table === 'OPERLOG' && stamp) db.prepare('UPDATE devices SET op_stamp = ? WHERE id = ?').run(stamp, device.id);
       return text(res, `OK: ${count}`);
     }

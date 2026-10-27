@@ -92,3 +92,7 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .toast.err { background: var(--danger); }
 .help { font-size: 13px; color: var(--muted); }
 .help code { background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+fieldset.checks { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px 8px; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+fieldset.checks legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+label.check { display: flex; flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 14px; }
+a { color: var(--primary); }

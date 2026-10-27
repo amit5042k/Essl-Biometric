@@ -78,6 +78,10 @@ function formModal(title, fields, onSubmit, okLabel = 'Save', { cancel = true } 
     let input;
     if (f.type === 'select') {
       input = `<select name="${f.name}">${f.options.map(([val, lab]) => `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select>`;
+    } else if (f.type === 'checks') {
+      const chosen = (f.value || []).map(String);
+      return `<fieldset class="full checks"><legend>${esc(f.label)}</legend>${f.options.map(([val, lab]) =>
+        `<label class="check"><input type="checkbox" name="${f.name}" value="${esc(val)}" ${chosen.includes(String(val)) ? 'checked' : ''}> ${esc(lab)}</label>`).join('')}${f.help ? `<span class="help">${f.help}</span>` : ''}</fieldset>`;
     } else if (f.type === 'checkbox') {
       input = `<input type="checkbox" name="${f.name}" ${v ? 'checked' : ''}>`;
     } else if (f.type === 'textarea') {
@@ -99,6 +103,10 @@ function formModal(title, fields, onSubmit, okLabel = 'Save', { cancel = true } 
       const values = {};
       for (const f of fields) {
         if (!f.name) continue;
+        if (f.type === 'checks') {
+          values[f.name] = [...form.querySelectorAll(`input[name="${f.name}"]:checked`)].map((x) => x.value);
+          continue;
+        }
         const el = form.elements[f.name];
         values[f.name] = f.type === 'checkbox' ? (el.checked ? 1 : 0) : f.type === 'number' ? (el.value === '' ? null : Number(el.value)) : el.value.trim();
       }
@@ -331,18 +339,46 @@ views.employees = async (el) => {
     <div class="toolbar"><h1>Employees</h1><span class="spacer"></span>
       <label>Search<input id="q" placeholder="code / name / dept"></label>
       <label>Status<select id="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select></label>
+      <button class="btn" id="copyBtn" disabled>Copy biometrics</button>
       <button class="btn" id="importBtn">Import CSV</button>
       <button class="btn primary" id="addBtn">Add employee</button></div>
     <div id="list"></div>`;
   shiftsCache = null;
+  const selected = new Set();
+  const syncSelection = () => {
+    $('#copyBtn').disabled = !selected.size;
+    $('#copyBtn').textContent = selected.size ? `Copy biometrics (${selected.size})` : 'Copy biometrics';
+  };
   const load = async () => {
-    const list = await get(`/employees?q=${encodeURIComponent($('#q').value)}&active=${$('#active').value}`);
-    $('#list').innerHTML = table(['Code', 'Name', 'Department', 'Designation', 'Shift', 'Card', 'Joined', ''], list.map((e) => `<tr>
+    const [list, bio] = await Promise.all([
+      get(`/employees?q=${encodeURIComponent($('#q').value)}&active=${$('#active').value}`),
+      get('/biometrics/summary'),
+    ]);
+    const bioCell = (code) => {
+      const b = bio[code];
+      if (!b) return '<span class="muted">–</span>';
+      const parts = [b.finger && `FP ${b.finger}`, b.face && `Face ${b.face}`, b.palm && `Palm ${b.palm}`, b.other && `Other ${b.other}`].filter(Boolean);
+      return `<a href="#" data-a="bio" data-code="${esc(code)}">${parts.join(' · ')}</a>`;
+    };
+    $('#list').innerHTML = table([`<input type="checkbox" id="selAll" title="Select all">`, 'Code', 'Name', 'Department', 'Designation', 'Shift', 'Card', 'Biometrics', 'Joined', ''], list.map((e) => `<tr>
+      <td><input type="checkbox" class="sel" value="${esc(e.code)}" ${selected.has(e.code) ? 'checked' : ''}></td>
       <td>${esc(e.code)}</td><td>${esc(e.name)}${e.active ? '' : ' <span class="muted">(inactive)</span>'}</td><td>${esc(e.department || '')}</td><td>${esc(e.designation || '')}</td>
-      <td>${esc(e.shift_name || 'Default')}</td><td>${esc(e.card_no || '')}</td><td>${esc(e.join_date || '')}</td>
+      <td>${esc(e.shift_name || 'Default')}</td><td>${esc(e.card_no || '')}</td><td>${bioCell(e.code)}</td><td>${esc(e.join_date || '')}</td>
       <td class="actions"><button class="btn sm" data-id="${e.id}" data-a="edit">Edit</button>
         <a class="btn sm" href="#daily" data-code="${esc(e.code)}" data-a="report">Report</a>
         <button class="btn sm danger" data-id="${e.id}" data-a="delete">Delete</button></td></tr>`));
+    const boxes = [...$('#list').querySelectorAll('input.sel')];
+    $('#selAll').checked = boxes.length > 0 && boxes.every((b) => b.checked);
+    $('#selAll').onchange = (ev) => {
+      boxes.forEach((b) => { b.checked = ev.target.checked; if (b.checked) selected.add(b.value); else selected.delete(b.value); });
+      syncSelection();
+    };
+    boxes.forEach((b) => (b.onchange = () => {
+      if (b.checked) selected.add(b.value); else selected.delete(b.value);
+      $('#selAll').checked = boxes.every((x) => x.checked);
+      syncSelection();
+    }));
+    syncSelection();
     $('#list').querySelectorAll('[data-a]').forEach((b) => {
       b.onclick = async (ev) => {
         const emp = list.find((x) => String(x.id) === b.dataset.id);
@@ -354,9 +390,15 @@ views.employees = async (el) => {
         } else if (b.dataset.a === 'report') {
           ev.preventDefault();
           employeeReport(b.dataset.code);
+        } else if (b.dataset.a === 'bio') {
+          ev.preventDefault();
+          if (await biometricDetails(b.dataset.code)) load();
         }
       };
     });
+  };
+  $('#copyBtn').onclick = async () => {
+    if (await copyBiometrics([...selected])) load();
   };
   $('#q').oninput = () => { clearTimeout(load.t); load.t = setTimeout(load, 250); };
   $('#active').onchange = load;
@@ -401,6 +443,53 @@ async function employeeReport(code) {
   showDetails(`${r.employee.name} (${r.employee.code}) – this month`,
     `<p>Present ${s.present} · Absent ${s.absent} · Leave ${s.leave} · Late ${s.late} · Work ${dur(s.workMin)} h · OT ${dur(s.otMin) || '0'} h</p>` +
     table(['Date', 'Status', 'In', 'Out', 'Hours', 'Late', 'Punches'], r.days.map((d) => `<tr><td>${d.date}</td><td>${badge(d.status)}</td><td>${esc(d.inTime || '')}</td><td>${esc(d.outTime || '')}</td><td>${dur(d.workMin)}</td><td>${d.lateMin || ''}</td><td>${esc((d.punches || []).join(' '))}</td></tr>`)));
+}
+
+// -------------------------------------------------------------- biometrics
+const BIO_LABEL = { finger: 'Fingerprint', face: 'Face', palm: 'Palm', other: 'Other' };
+
+/** Lists the templates stored for one employee; offers to delete them. Resolves true if deleted. */
+async function biometricDetails(code) {
+  const rows = await get(`/biometrics/${encodeURIComponent(code)}`);
+  const r = await formModal(`Stored biometrics – ${code}`, [
+    { type: 'html', html: table(['Type', 'Index', 'Size', 'From device', 'Updated'], rows.map((x) => `<tr><td>${BIO_LABEL[x.category]}</td><td>${x.kind === 'bio' ? Math.floor(x.idx / 100) : x.idx}</td><td>${x.size} chars</td><td>${esc(x.device_name || '')}</td><td>${esc(x.updated_at)}</td></tr>`)) },
+    { type: 'html', html: 'These are copies kept by the app so they can be sent to other machines. Deleting them here does not remove anything from the machines.' },
+  ], null, 'Delete stored copies');
+  if (!r) return false;
+  if (!confirm(`Delete the stored biometric templates of ${code}?`)) return false;
+  return !!(await act(null, () => del(`/biometrics/${encodeURIComponent(code)}`), (x) => `Deleted ${x.removed} template(s)`));
+}
+
+/** Copy dialog for the selected employees. Resolves with the result, or null when cancelled. */
+async function copyBiometrics(codes) {
+  const devs = (await get('/devices')).filter((d) => d.enabled);
+  if (devs.length < 1) { toast('Add a device first', true); return null; }
+  const label = (d) => `${d.name} (${d.mode === 'push' ? 'ADMS' : 'TCP/IP'})`;
+  const res = await formModal(`Copy biometrics – ${codes.length} employee(s)`, [
+    { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}` },
+    { name: 'sourceDeviceId', label: 'Copy from', type: 'select', value: '', full: true, options: [['', 'Templates already stored in the app (from any machine)'], ...devs.map((d) => [d.id, label(d)])],
+      help: 'A TCP/IP machine is read now. An ADMS machine sends templates by itself when someone is enrolled; use <i>Re-upload all</i> on the Devices page to collect ones enrolled earlier.' },
+    { name: 'types', label: 'What to copy', type: 'checks', value: ['finger', 'face'], options: [['finger', 'Fingerprints'], ['face', 'Face'], ['palm', 'Palm']] },
+    { name: 'targetDeviceIds', label: 'Copy to', type: 'checks', value: [], options: devs.map((d) => [d.id, label(d)]),
+      help: 'The employee is created on the target if missing. TCP/IP targets receive fingerprints only; face and palm need an ADMS target.' },
+    { type: 'html', html: '<b>Compatibility:</b> templates work only between machines that use the same algorithm version (for example ZKFinger 10, or the same face engine). Check one employee on the target machine after copying.' },
+  ], (v) => {
+    if (!v.targetDeviceIds.length) throw new Error('Choose at least one machine under "Copy to"');
+    if (!v.types.length) throw new Error('Choose what to copy');
+    if (v.sourceDeviceId && v.targetDeviceIds.includes(String(v.sourceDeviceId))) throw new Error('The source machine cannot also be a target');
+    return post('/biometrics/copy', { codes, sourceDeviceId: v.sourceDeviceId || null, targetDeviceIds: v.targetDeviceIds.map(Number), types: v.types });
+  }, 'Copy');
+  if (!res) return null;
+  const STATUS = { copied: '<span class="ok">Copied</span>', queued: '<span class="ok">Queued</span>', skipped: '<span class="warn">Skipped</span>' };
+  const what = (e) => [e.finger && `FP ${e.finger}`, e.face && `Face ${e.face}`, e.palm && `Palm ${e.palm}`].filter(Boolean).join(' · ');
+  const rows = [];
+  for (const d of res.results) {
+    if (!d.ok) { rows.push(`<tr><td>${esc(d.device)}</td><td colspan="3" class="bad" style="white-space:normal">${esc(d.error)}</td></tr>`); continue; }
+    for (const e of d.employees) rows.push(`<tr><td>${esc(d.device)}</td><td>${esc(e.code)}</td><td>${STATUS[e.status] || esc(e.status)} ${esc(what(e))}</td><td style="white-space:normal">${esc(e.note || '')}</td></tr>`);
+  }
+  await showDetails('Copy result', `${res.fetched ? `<p>${esc(res.fetched.message)}</p>` : ''}${table(['Target', 'Employee', 'Result', 'Note'], rows)}
+    <p class="help">"Queued" means an ADMS machine receives the data when it next connects (usually within a minute); see Devices → Commands.</p>`);
+  return res;
 }
 
 // ----------------------------------------------------------------- punches

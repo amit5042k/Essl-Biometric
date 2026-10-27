@@ -45,7 +45,7 @@ function monthRange(month) {
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-function createApiRouter({ db, auth, devices }) {
+function createApiRouter({ db, auth, devices, biometrics }) {
   const r = express.Router();
   r.use(express.json({ limit: '5mb' }));
 
@@ -291,6 +291,28 @@ function createApiRouter({ db, auth, devices }) {
 
   r.get('/departments', (req, res) => {
     res.json(db.prepare(`SELECT DISTINCT department FROM employees WHERE department IS NOT NULL AND department <> '' ORDER BY 1`).all().map((x) => x.department));
+  });
+
+  // ------------------------------------------------------------ biometrics
+  const codeList = (v) => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
+
+  r.get('/biometrics/summary', (req, res) => res.json(biometrics.summary()));
+  r.get('/biometrics/:code', (req, res) => res.json(biometrics.list(req.params.code)));
+  r.delete('/biometrics/:code', (req, res) => res.json({ removed: biometrics.remove(req.params.code) }));
+
+  r.post('/biometrics/fetch', async (req, res) => {
+    getDevice(req.body.deviceId);
+    res.json(await biometrics.fetch(Number(req.body.deviceId), codeList(req.body.codes)));
+  });
+
+  r.post('/biometrics/copy', async (req, res) => {
+    const types = codeList(req.body.types).filter((t) => ['finger', 'face', 'palm'].includes(t));
+    res.json(await biometrics.copy({
+      codes: codeList(req.body.codes),
+      sourceDeviceId: req.body.sourceDeviceId ? Number(req.body.sourceDeviceId) : null,
+      targetDeviceIds: Array.isArray(req.body.targetDeviceIds) ? req.body.targetDeviceIds.map(Number) : [],
+      types: types.length ? types : ['finger', 'face'],
+    }));
   });
 
   // ---------------------------------------------------------------- shifts

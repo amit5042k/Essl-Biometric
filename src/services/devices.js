@@ -3,6 +3,7 @@
 const { ZKClient } = require('../zk/client');
 const { savePunches, importDeviceUsers } = require('./punches');
 const T = require('../util/time');
+const { userInfoCommand } = require('./biometrics');
 
 /**
  * Device operations for both connection modes:
@@ -215,17 +216,7 @@ class DeviceService {
     const device = this.get(deviceId);
     if (!device) throw new Error('Device not found');
     if (device.mode === 'push') {
-      const fields = [
-        `PIN=${employee.code}`,
-        `Name=${employee.name}`,
-        'Pri=0',
-        'Passwd=',
-        `Card=${employee.card_no || ''}`,
-        'Grp=1',
-        'TZ=0000000100000000',
-        'Verify=0',
-      ];
-      this.queueCommand(device.id, `DATA UPDATE USERINFO ${fields.join('\t')}`);
+      this.queueCommand(device.id, userInfoCommand(employee));
       return Promise.resolve({ queued: true });
     }
     return this._serial(deviceId, async () => {

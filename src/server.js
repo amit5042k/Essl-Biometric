@@ -8,11 +8,13 @@ const { createAuth, ensureAdmin } = require('./auth');
 const { createAdmsRouter } = require('./adms/router');
 const { createApiRouter } = require('./routes/api');
 const { DeviceService } = require('./services/devices');
+const { BiometricService } = require('./services/biometrics');
 
 function createApp({ db, cfg = config, logger = console }) {
   ensureAdmin(db, cfg.adminUser, cfg.adminPassword, logger);
   const auth = createAuth(db, cfg);
   const devices = new DeviceService(db, cfg, logger);
+  const biometrics = new BiometricService(db, devices);
 
   const app = express();
   app.set('trust proxy', 'loopback');
@@ -21,7 +23,7 @@ function createApp({ db, cfg = config, logger = console }) {
   // Device endpoints (ADMS push). Routing is case-insensitive, so /iClock works too.
   app.use('/iclock', createAdmsRouter({ db, config: cfg, logger }));
 
-  app.use('/api', createApiRouter({ db, auth, devices }));
+  app.use('/api', createApiRouter({ db, auth, devices, biometrics }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   return { app, devices };

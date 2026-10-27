@@ -15,6 +15,9 @@ A Node.js attendance management system for **eSSL Classic** (K21, K30, X990, MB1
   ADMS command queue.
 - **Employees**: master data, departments, shift assignment, CSV import, auto-import of users enrolled on devices,
   upload employees (ID, name, card) to devices.
+- **Copy biometrics**: tick employees on the Employees page and copy their fingerprint / face / palm templates
+  from one machine (or the app's stored copies) to one or more other machines. Only the selected employees are
+  copied.
 - **Punch logs**: de-duplicated storage of every punch, filters, CSV export, manual punches (regularisation)
   with reason.
 - **Rules**: shifts with grace time, early-exit grace, half/full-day thresholds, weekly offs, overtime, night shifts
@@ -190,6 +193,10 @@ All endpoints are under `/api` and require the session cookie from `POST /api/lo
 | POST | `/devices/:id/sync` · `/time` · `/restart` · `/clear-logs` | device actions |
 | POST | `/devices/:id/upload-employees` | `{ codes: [...] }` or all active employees |
 | GET/POST/PUT/DELETE | `/employees`, `/employees/:id`; POST `/employees/bulk` | employee master |
+| GET | `/biometrics/summary`, `/biometrics/:code` | stored template counts / list (no template data) |
+| POST | `/biometrics/copy` | `{ codes, sourceDeviceId?, targetDeviceIds, types: ["finger","face","palm"] }` |
+| POST | `/biometrics/fetch` | `{ deviceId, codes? }` read templates from a device into the app |
+| DELETE | `/biometrics/:code` | delete stored templates of one employee |
 | GET/POST | `/punches`, `/punches.csv` | punch logs, manual punch |
 | GET | `/reports/daily?date=` · `/reports/daily.csv` | daily attendance |
 | GET | `/reports/monthly?month=YYYY-MM` · `/reports/monthly.csv` | muster roll |
@@ -198,8 +205,14 @@ All endpoints are under `/api` and require the session cookie from `POST /api/lo
 
 ## Notes and limits
 
-- Fingerprint and face templates are not copied between devices; enrol biometrics on each terminal. Uploading an
-  employee creates the user record (ID, name, card) so they can be enrolled there.
+- **Copying biometrics** (Employees → tick employees → *Copy biometrics*):
+  - TCP/IP machines are read on the spot; ADMS machines upload templates by themselves when someone enrols
+    (use *Re-upload all* on the Devices page to collect templates enrolled earlier).
+  - TCP/IP targets receive fingerprints only; face and palm templates can only be sent to ADMS targets.
+  - Templates only work between machines using the same algorithm (e.g. ZKFinger 10, the same face engine).
+    Check one employee on the target machine after copying.
+  - Copies of the templates are kept in the database so they can be sent later; they can be deleted per
+    employee (click the count in the *Biometrics* column). Treat the database file as sensitive personal data.
 - Pull mode reads the full device log on every sync (the protocol has no "since" filter). Duplicates are ignored.
   For devices with very large logs, enable *Clear device logs after each sync* — logs are only cleared after they
   have been saved.
