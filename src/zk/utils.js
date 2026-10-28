@@ -79,6 +79,11 @@ function encodeTime(date) {
   ) >>> 0;
 }
 
+/** Same packed format, from the UTC fields of a Date. */
+function encodeTimeUTC(date) {
+  return encodeTime(new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()));
+}
+
 function formatParts(y, mo, d, h, mi, s) {
   const p = (n) => String(n).padStart(2, '0');
   return `${y}-${p(mo)}-${p(d)} ${p(h)}:${p(mi)}:${p(s)}`;
@@ -121,6 +126,7 @@ module.exports = {
   parsePacket,
   decodeTime,
   encodeTime,
+  encodeTimeUTC,
   formatParts,
   makeCommKey,
   cstr,

@@ -99,7 +99,7 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   });
 
   // --------------------------------------------------------------- devices
-  const DEVICE_FIELDS = ['name', 'model', 'mode', 'ip', 'port', 'transport', 'comm_key', 'serial_number', 'location', 'enabled', 'poll_minutes', 'clear_after_sync'];
+  const DEVICE_FIELDS = ['name', 'model', 'mode', 'ip', 'port', 'transport', 'comm_key', 'serial_number', 'location', 'enabled', 'poll_minutes', 'clear_after_sync', 'auto_restart_at'];
 
   function validateDevice(d, partial = false) {
     if (!partial || d.name !== undefined) if (!String(d.name || '').trim()) throw bad('Name is required');
@@ -107,6 +107,7 @@ function createApiRouter({ db, auth, devices, biometrics }) {
     if (d.transport != null && !['tcp', 'udp'].includes(d.transport)) throw bad('transport must be tcp or udp');
     if (d.mode === 'pull' && !d.ip) throw bad('IP address is required for TCP/IP devices');
     if (d.mode === 'push' && !d.serial_number) throw bad('Serial number is required for ADMS devices');
+    if (d.auto_restart_at != null && !HHMM.test(d.auto_restart_at)) throw bad('Daily restart time must be HH:MM (24h)');
     for (const k of ['port', 'comm_key', 'poll_minutes']) {
       if (d[k] != null && !Number.isInteger(Number(d[k]))) throw bad(`${k} must be a number`);
     }

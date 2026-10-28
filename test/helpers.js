@@ -14,6 +14,7 @@ async function startApp(overrides = {}) {
     adms: { autoApprove: false, timeZone: '330', delay: 10 },
     defaultPollMinutes: 5,
     autoTimeSync: false,
+    timeDriftSeconds: 60,
     ...overrides,
   };
   const { app, devices } = createApp({ db, cfg, logger: silent });

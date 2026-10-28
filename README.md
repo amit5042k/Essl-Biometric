@@ -220,5 +220,11 @@ All endpoints are under `/api` and require the session cookie from `POST /api/lo
 - Pull mode reads the full device log on every sync (the protocol has no "since" filter). Duplicates are ignored.
   For devices with very large logs, enable *Clear device logs after each sync* — logs are only cleared after they
   have been saved.
-- Device times are stored as the device's local wall-clock time; keep device clocks correct (auto time sync is on by
-  default for pull devices).
+- **Device clocks.** Punch times come from the machine's clock, so a drifting clock shifts attendance.
+  - TCP/IP machines: every sync compares the machine's clock with the server and corrects it when it is off by
+    more than `TIME_DRIFT_SECONDS` (default 60), plus once a day. *Sync time* corrects it on demand and says by
+    how much it was off.
+  - ADMS machines (e.g. Orcus) take the server time only when they connect (HTTP `Date` header + `TimeZone`; push
+    3.x firmware may also ask `/iclock/rtdata?type=time`, which the app answers). Between restarts the clock can
+    drift. The app estimates the drift from real-time punches and shows it on the Devices page. *Re-sync clock*
+    restarts the machine; *Restart daily at* (device settings) does that automatically at a quiet time.

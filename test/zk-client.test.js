@@ -53,7 +53,8 @@ test('authenticates with comm key, writes/deletes users, sets time', async () =>
     assert.strictEqual(sim.state.users.length, 0);
 
     await zk.setTime(new Date(2025, 0, 2, 3, 4, 5));
-    assert.strictEqual(await zk.getTime(), '2025-01-02 03:04:05');
+    // the simulated clock keeps ticking after it is set
+    assert.match(await zk.getTime(), /^2025-01-02 03:04:0[5-7]$/);
   });
 });
 

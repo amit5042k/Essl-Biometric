@@ -83,6 +83,7 @@ class DeviceService {
           await zk.disableDevice();
           try {
             const info = await zk.getInfo();
+            const checkedAt = T.nowLocal();
             const users = await zk.getUsers();
             const logs = await zk.getAttendance();
             const newUsers = importDeviceUsers(this.db, users);
@@ -95,13 +96,20 @@ class DeviceService {
               cleared = true;
             }
 
+            // Clock check: device time vs. server time, read moments apart.
+            const drift = (T.toMinutes(info.time) - T.toMinutes(checkedAt)) * 60;
             let timeSynced = false;
-            const today = T.nowLocal().slice(0, 10);
-            if (this.config.autoTimeSync && (!device.last_time_sync || device.last_time_sync.slice(0, 10) < today)) {
+            const today = checkedAt.slice(0, 10);
+            const dailyDue = !device.last_time_sync || device.last_time_sync.slice(0, 10) < today;
+            if (this.config.autoTimeSync && (Math.abs(drift) > this.config.timeDriftSeconds || dailyDue)) {
               await zk.setTime(new Date());
               timeSynced = true;
+              if (Math.abs(drift) > this.config.timeDriftSeconds) {
+                this.log(device.id, `Clock was ${T.formatDrift(drift)} ${drift < 0 ? 'behind' : 'ahead'}; corrected`, 'warn');
+              }
             }
-            return { info, users: users.length, newUsers, logs: logs.length, added, cleared, timeSynced };
+            this.recordDrift(device.id, timeSynced ? 0 : drift, 'read');
+            return { info, users: users.length, newUsers, logs: logs.length, added, cleared, timeSynced, drift };
           } finally {
             await zk.enableDevice().catch(() => {});
           }
@@ -161,23 +169,62 @@ class DeviceService {
     return device;
   }
 
+  /** Stores the last known clock error (seconds; negative = device behind). */
+  recordDrift(deviceId, seconds, source) {
+    this.db
+      .prepare('UPDATE devices SET clock_drift = ?, clock_checked_at = ?, clock_source = ? WHERE id = ?')
+      .run(Math.round(seconds), T.nowLocal(), source, deviceId);
+  }
+
   setTime(deviceId) {
     const device = this.get(deviceId);
     if (!device) throw new Error('Device not found');
     if (device.mode === 'push') {
       // ADMS terminals take their clock from the server (HTTP Date header +
-      // TimeZone option) during the handshake; there is no direct command.
+      // TimeZone option) when they connect; a restart makes them reconnect.
+      this.queueCommand(device.id, 'REBOOT');
+      this.log(device.id, 'Restart queued to re-sync the clock');
       return Promise.resolve({
-        queued: false,
-        message: 'ADMS devices take time from the server at handshake. Check ADMS_TIMEZONE, or restart the device to force a handshake.',
+        queued: true,
+        message: 'Restart queued. The machine takes the server time when it reconnects (within a few minutes).',
       });
     }
     return this._serial(deviceId, async () => {
-      await this.withClient(device, (zk) => zk.setTime(new Date()));
+      const before = await this.withClient(device, async (zk) => {
+        const t = await zk.getTime();
+        const drift = (T.toMinutes(t) - T.toMinutes(T.nowLocal())) * 60;
+        await zk.setTime(new Date());
+        return drift;
+      });
       this.db.prepare('UPDATE devices SET last_time_sync = ? WHERE id = ?').run(T.nowLocal(), device.id);
-      this.log(device.id, 'Device clock synchronised');
-      return { message: 'Device time updated' };
+      this.recordDrift(device.id, 0, 'read');
+      this.log(device.id, `Device clock synchronised (was ${T.formatDrift(before)} ${before < 0 ? 'behind' : 'ahead'})`);
+      return { message: `Device time updated (it was ${T.formatDrift(before)} ${before < 0 ? 'behind' : 'ahead'})`, drift: before };
     });
+  }
+
+  /**
+   * ADMS devices only take the server time when they connect, so a daily
+   * restart keeps a drifting clock right. Restarts are queued once per day
+   * within an hour after the configured time.
+   */
+  queueDailyRestarts(now = T.nowLocal()) {
+    const today = now.slice(0, 10);
+    const minuteOfDay = T.hhmmToMinutes(now.slice(11, 16));
+    const queued = [];
+    const devices = this.db
+      .prepare(`SELECT * FROM devices WHERE enabled = 1 AND mode = 'push' AND auto_restart_at IS NOT NULL AND auto_restart_at <> ''`)
+      .all();
+    for (const d of devices) {
+      if (d.last_auto_restart && d.last_auto_restart.slice(0, 10) >= today) continue;
+      const at = T.hhmmToMinutes(d.auto_restart_at);
+      if (minuteOfDay < at || minuteOfDay - at > 60) continue;
+      this.queueCommand(d.id, 'REBOOT');
+      this.db.prepare('UPDATE devices SET last_auto_restart = ? WHERE id = ?').run(now, d.id);
+      this.log(d.id, `Daily restart queued (${d.auto_restart_at}) to re-sync the clock`);
+      queued.push(d.id);
+    }
+    return queued;
   }
 
   restart(deviceId) {
@@ -257,6 +304,7 @@ class DeviceService {
         const last = d.last_sync ? T.toMinutes(d.last_sync) * 60000 : 0;
         if (now - last >= every) this.sync(d.id).catch(() => {});
       }
+      this.queueDailyRestarts();
     };
     this.timer = setInterval(tick, 30000);
     this.timer.unref();

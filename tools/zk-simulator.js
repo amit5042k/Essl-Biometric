@@ -65,6 +65,7 @@ function createSimulator({
   logs = [],
   templates = [],
   fpVersion = '10',
+  clockOffsetSeconds = 0, // simulate a clock that is behind (negative) or ahead
   faceVersion = '',
   chunkSize = 300,
 } = {}) {
@@ -73,7 +74,8 @@ function createSimulator({
     logs: [...logs],
     // [{ uid, fid, valid, template: Buffer }]
     templates: templates.map((t) => ({ valid: 1, ...t })),
-    time: null,
+    // The device clock ticks; it is "now + offset".
+    clockOffsetMs: clockOffsetSeconds * 1000,
   };
 
   const server = net.createServer((sock) => {
@@ -193,11 +195,16 @@ function createSimulator({
           return send(C.CMD_ACK_OK, sizes());
         case C.CMD_GET_TIME: {
           const b = Buffer.alloc(4);
-          b.writeUInt32LE(state.time ?? U.encodeTime(new Date()), 0);
+          b.writeUInt32LE(U.encodeTime(new Date(Date.now() + state.clockOffsetMs)), 0);
           return send(C.CMD_ACK_OK, b);
         }
         case C.CMD_SET_TIME:
-          state.time = req.data.readUInt32LE(0);
+          {
+            const [d, t] = U.decodeTime(req.data.readUInt32LE(0)).split(' ');
+            const [y, mo, da] = d.split('-').map(Number);
+            const [h, mi, s] = t.split(':').map(Number);
+            state.clockOffsetMs = new Date(y, mo - 1, da, h, mi, s).getTime() - Date.now();
+          }
           return send(C.CMD_ACK_OK);
         case C.CMD_DATA_WRRQ: {
           const cmd = req.data.readInt16LE(1);
@@ -300,6 +307,10 @@ if (require.main === module) {
     { uid: 2, fid: 0, template: fake(3) },
     { uid: 3, fid: 5, template: fake(4) }, { uid: 3, fid: 6, template: fake(5) },
   ];
-  const sim = createSimulator({ users, logs, commKey, templates, serialNumber: process.env.SIM_SERIAL || 'SIMULATOR0001' });
+  const sim = createSimulator({
+    users, logs, commKey, templates,
+    serialNumber: process.env.SIM_SERIAL || 'SIMULATOR0001',
+    clockOffsetSeconds: Number(process.env.SIM_CLOCK_OFFSET) || 0,
+  });
   sim.listen(port).then((p) => console.log(`ZK simulator listening on tcp/${p} (comm key ${commKey})`));
 }

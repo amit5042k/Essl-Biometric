@@ -34,4 +34,6 @@ module.exports = {
   defaultPollMinutes: Number(env.POLL_MINUTES) || 5,
   // Sync device clocks once a day for pull devices
   autoTimeSync: bool(env.AUTO_TIME_SYNC, true),
+  // Correct a TCP/IP device's clock whenever it is off by more than this (seconds)
+  timeDriftSeconds: Number(env.TIME_DRIFT_SECONDS) || 60,
 };

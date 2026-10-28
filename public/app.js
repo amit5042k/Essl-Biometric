@@ -212,6 +212,17 @@ views.dashboard = async (el) => {
 };
 
 // ----------------------------------------------------------------- devices
+/** "Clock 4 min behind" under the last sync time, from the last clock check. */
+function clockText(d) {
+  if (d.clock_drift == null) return '';
+  const s = Math.abs(d.clock_drift);
+  const est = d.clock_source === 'punch' ? ' (estimated from the latest punch)' : '';
+  const when = `checked ${d.clock_checked_at || ''}${est}`;
+  if (s <= 60) return `<br><span class="muted" title="${esc(when)}">Clock OK${s > 5 ? ` (${s} s ${d.clock_drift < 0 ? 'behind' : 'ahead'})` : ''}</span>`;
+  const amount = s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+  return `<br><span class="warn" title="${esc(when)}">Clock ${amount} ${d.clock_drift < 0 ? 'behind' : 'ahead'}${est ? ' (est.)' : ''}</span>`;
+}
+
 const deviceFields = (d = {}) => [
   { name: 'name', label: 'Name', value: d.name, required: true },
   { name: 'model', label: 'Model', value: d.model, placeholder: 'e.g. X990 / K30 / Orcus' },
@@ -223,6 +234,8 @@ const deviceFields = (d = {}) => [
   { name: 'comm_key', label: 'Comm key (device password)', type: 'number', value: d.comm_key ?? 0 },
   { name: 'serial_number', label: 'Serial number (required for ADMS)', value: d.serial_number },
   { name: 'poll_minutes', label: 'Auto-sync every (minutes)', type: 'number', value: d.poll_minutes, placeholder: 'default' },
+  { name: 'auto_restart_at', label: 'ADMS: restart daily at (keeps clock right)', type: 'time', value: d.auto_restart_at, full: true,
+    help: 'ADMS machines take the server time only when they connect. If the clock drifts, pick a quiet time (e.g. 03:30). Leave empty for no restart.' },
   { name: 'clear_after_sync', label: 'Clear device logs after each sync', type: 'checkbox', value: d.clear_after_sync },
   { name: 'enabled', label: 'Enabled', type: 'checkbox', value: d.enabled ?? 1 },
   { type: 'html', html: `<b>TCP/IP</b>: on the device open <i>Comm. → Ethernet</i> for the IP and <i>Comm. → Comm Key</i>. <b>ADMS</b>: set <i>Comm. → Cloud Server Setting</i> to <code>${esc(location.hostname)}</code> port <code>${esc(location.port || 80)}</code>; the device appears here automatically and must be enabled.` },
@@ -239,13 +252,13 @@ views.devices = async (el) => {
       <td>${d.mode === 'push' ? 'ADMS' : `TCP/IP ${esc(d.transport?.toUpperCase())}`}</td>
       <td>${d.mode === 'pull' ? `${esc(d.ip)}:${esc(d.port)}` : ''}<br><span class="muted">${esc(d.serial_number || '')}</span></td>
       <td>${esc(d.firmware || '')}${algText(d) ? `<br><span class="muted" title="Matching algorithm versions">${esc(algText(d))}</span>` : ''}</td><td>${d.user_count ?? ''}</td><td>${d.punch_count}</td>
-      <td>${esc(d.last_sync || '')}</td>
+      <td>${esc(d.last_sync || '')}${clockText(d)}</td>
       <td>${!d.enabled ? '<span class="warn">Disabled</span>' : d.last_error ? `<span class="bad">${esc(d.last_error)}</span>` : '<span class="ok">OK</span>'}${d.pending_commands ? `<br><span class="muted">${d.pending_commands} queued cmd</span>` : ''}</td>
       </tr><tr class="action-row"><td colspan="8"><div class="actions btns" data-id="${d.id}" data-mode="${d.mode}">
         <button class="btn sm" data-a="sync">${d.mode === 'push' ? 'Request upload' : 'Sync now'}</button>
         <button class="btn sm" data-a="edit">Edit</button>
         <button class="btn sm" data-a="upload">Upload employees</button>
-        ${d.mode === 'pull' ? '<button class="btn sm" data-a="users">Device users</button><button class="btn sm" data-a="time">Sync time</button>' : '<button class="btn sm" data-a="reupload">Re-upload all</button><button class="btn sm" data-a="cmds">Commands</button>'}
+        ${d.mode === 'pull' ? '<button class="btn sm" data-a="users">Device users</button><button class="btn sm" data-a="time">Sync time</button>' : '<button class="btn sm" data-a="time">Re-sync clock</button><button class="btn sm" data-a="reupload">Re-upload all</button><button class="btn sm" data-a="cmds">Commands</button>'}
         <button class="btn sm" data-a="logs">Log</button>
         <button class="btn sm" data-a="restart">Restart</button>
         <button class="btn sm danger" data-a="clear">Clear logs</button>
@@ -270,7 +283,10 @@ views.devices = async (el) => {
       const dev = list.find((x) => String(x.id) === id);
       switch (btn.dataset.a) {
         case 'sync': await act(btn, () => post(`/devices/${id}/sync`)); return route();
-        case 'time': return act(btn, () => post(`/devices/${id}/time`));
+        case 'time':
+          if (mode === 'push' && !confirm('ADMS machines take the time from the server when they connect. Restart this machine now to correct its clock? Punches are not lost.')) return;
+          await act(btn, () => post(`/devices/${id}/time`));
+          return route();
         case 'reupload': return act(btn, () => post(`/devices/${id}/reupload`));
         case 'restart': if (confirm('Restart the device?')) await act(btn, () => post(`/devices/${id}/restart`)); return;
         case 'clear':

@@ -61,7 +61,35 @@ function normalizeTimestamp(s) {
   return `${m[1]}-${pad(m[2])}-${pad(m[3])} ${pad(m[4])}:${m[5]}:${m[6] || '00'}`;
 }
 
+/** ADMS_TIMEZONE ("330", "5.5", "+0530", "-3") -> offset in minutes. */
+function tzMinutes(value) {
+  const s = String(value ?? '').trim();
+  const hhmm = s.match(/^([+-])(\d{2}):?(\d{2})$/);
+  if (hhmm) return (hhmm[1] === '-' ? -1 : 1) * (Number(hhmm[2]) * 60 + Number(hhmm[3]));
+  const n = Number(s);
+  if (!Number.isFinite(n)) return 0;
+  return Math.abs(n) <= 14 ? Math.round(n * 60) : Math.round(n); // small values are hours
+}
+
+/** 330 -> "+0530" */
+function tzString(minutes) {
+  const sign = minutes < 0 ? '-' : '+';
+  const m = Math.abs(minutes);
+  return `${sign}${pad(Math.floor(m / 60))}${pad(m % 60)}`;
+}
+
+/** Seconds -> "3 min 12 s" */
+function formatDrift(seconds) {
+  const s = Math.abs(Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ${s % 60} s`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+
 module.exports = {
+  tzMinutes,
+  tzString,
+  formatDrift,
   pad,
   toMinutes,
   fromMinutes,

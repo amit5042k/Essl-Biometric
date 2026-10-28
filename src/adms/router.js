@@ -5,6 +5,11 @@ const P = require('./parser');
 const { savePunches, importDeviceUsers } = require('../services/punches');
 const { saveTemplates } = require('../services/biometrics');
 const T = require('../util/time');
+const { encodeTimeUTC } = require('../zk/utils');
+
+// A real-time upload's newest punch was taken seconds ago, so its time shows
+// how far the device clock is off. Bigger gaps are more likely old punches.
+const DRIFT_WINDOW_SECONDS = 30 * 60;
 
 /**
  * ADMS / iClock "push" protocol. Configure the terminal under
@@ -91,6 +96,14 @@ function createAdmsRouter({ db, config, logger = console }) {
     if (table === 'ATTLOG') {
       const logs = P.parseAttLog(body);
       const added = savePunches(db, device.id, logs);
+      if (logs.length && logs.length <= 5) {
+        const newest = logs.reduce((m, l) => (l.timestamp > m ? l.timestamp : m), logs[0].timestamp);
+        const now = T.nowLocal();
+        const drift = (T.toMinutes(newest) - T.toMinutes(now)) * 60;
+        if (Math.abs(drift) <= DRIFT_WINDOW_SECONDS) {
+          db.prepare(`UPDATE devices SET clock_drift = ?, clock_checked_at = ?, clock_source = 'punch' WHERE id = ?`).run(Math.round(drift), now, device.id);
+        }
+      }
       db.prepare('UPDATE devices SET last_sync = ?, att_stamp = COALESCE(?, att_stamp), last_error = NULL WHERE id = ?').run(T.nowLocal(), stamp || null, device.id);
       if (logs.length) {
         db.prepare('INSERT INTO device_logs (device_id, message) VALUES (?, ?)').run(device.id, `Received ${logs.length} logs (${added} new)`);
@@ -171,6 +184,16 @@ function createAdmsRouter({ db, config, logger = console }) {
       upd.run(r.returnCode >= 0 ? 'done' : 'failed', `Return=${r.returnCode}`, now, r.id, device.id);
     }
     return text(res, 'OK');
+  });
+
+  // Newer (push 3.x) firmware asks for the server time periodically:
+  //   GET /iclock/rtdata?SN=..&type=time  ->  DateTime=<packed UTC time>,ServerTZ=+0530
+  router.get('/rtdata', (req, res) => {
+    const device = guard(req, res);
+    if (!device) return;
+    if (String(req.query.type || '').toLowerCase() !== 'time') return text(res, 'OK');
+    const tz = T.tzString(T.tzMinutes(config.adms.timeZone));
+    return text(res, `DateTime=${encodeTimeUTC(new Date())},ServerTZ=${tz}`);
   });
 
   // Newer firmwares probe these; acknowledge so they proceed.
