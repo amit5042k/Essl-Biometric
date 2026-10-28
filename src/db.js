@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS devices (
   poll_minutes INTEGER,
   clear_after_sync INTEGER NOT NULL DEFAULT 0,
   firmware TEXT,
+  fp_version TEXT,
+  face_version TEXT,
   user_count INTEGER,
   log_count INTEGER,
   last_seen TEXT,
@@ -152,12 +154,21 @@ CREATE TABLE IF NOT EXISTS device_logs (
 );
 `;
 
+// Columns added after the first release; CREATE TABLE IF NOT EXISTS does not add them.
+function migrate(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name));
+  for (const [name, type] of [['fp_version', 'TEXT'], ['face_version', 'TEXT']]) {
+    if (!cols.has(name)) db.exec(`ALTER TABLE devices ADD COLUMN ${name} ${type}`);
+  }
+}
+
 function open(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new Database(file);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  migrate(db);
 
   if (!db.prepare('SELECT 1 FROM shifts LIMIT 1').get()) {
     db.prepare(

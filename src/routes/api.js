@@ -312,6 +312,7 @@ function createApiRouter({ db, auth, devices, biometrics }) {
       sourceDeviceId: req.body.sourceDeviceId ? Number(req.body.sourceDeviceId) : null,
       targetDeviceIds: Array.isArray(req.body.targetDeviceIds) ? req.body.targetDeviceIds.map(Number) : [],
       types: types.length ? types : ['finger', 'face'],
+      force: req.body.force === true || req.body.force === 1,
     }));
   });
 

@@ -5,6 +5,22 @@ const T = require('../util/time');
 // BIODATA "Type" values used by ZKTeco/eSSL push firmware.
 const BIO_TYPES = { 1: 'finger', 2: 'face', 8: 'palm', 9: 'face' };
 
+const LABEL = { finger: 'fingerprint', face: 'face', palm: 'palm', other: 'other' };
+
+/** "10", "10.0", "ZKFinger10" -> 10; empty/unknown -> null. */
+function majorVersion(v) {
+  const m = String(v ?? '').match(/\d+/);
+  return m && Number(m[0]) > 0 ? Number(m[0]) : null;
+}
+
+/** Algorithm version a device uses for a template category, if it reported one. */
+function deviceVersion(device, cat) {
+  if (!device) return null;
+  if (cat === 'finger') return majorVersion(device.fp_version);
+  if (cat === 'face') return majorVersion(device.face_version);
+  return null;
+}
+
 /** Which user-facing category a stored template belongs to. */
 function category(rec) {
   if (rec.kind === 'finger') return 'finger';
@@ -136,9 +152,11 @@ class BiometricService {
 
   /**
    * Copies templates of the selected employees to the target devices.
-   * @param {{codes:string[], sourceDeviceId?:number|null, targetDeviceIds:number[], types?:string[]}} opts
+   * Templates whose algorithm version differs from the target's are skipped
+   * unless force is set; unknown versions are copied with a warning.
+   * @param {{codes:string[], sourceDeviceId?:number|null, targetDeviceIds:number[], types?:string[], force?:boolean}} opts
    */
-  async copy({ codes, sourceDeviceId = null, targetDeviceIds, types = ['finger', 'face'] }) {
+  async copy({ codes, sourceDeviceId = null, targetDeviceIds, types = ['finger', 'face'], force = false }) {
     if (!codes?.length) throw Object.assign(new Error('Select at least one employee'), { status: 400 });
     if (!targetDeviceIds?.length) throw Object.assign(new Error('Select at least one target device'), { status: 400 });
 
@@ -171,10 +189,11 @@ class BiometricService {
         continue;
       }
       try {
+        const check = (recs) => this._checkVersions(recs, target, force);
         const rows = target.mode === 'push'
-          ? this._copyToPush(target, codes, employees, templatesFor)
-          : await this._copyToPull(target, codes, employees, templatesFor);
-        results.push({ deviceId: target.id, device: target.name, mode: target.mode, ok: true, employees: rows });
+          ? this._copyToPush(target, codes, employees, templatesFor, check)
+          : await this._copyToPull(target, codes, employees, templatesFor, check);
+        results.push({ deviceId: target.id, device: target.name, mode: target.mode, ok: true, fpVersion: target.fp_version, faceVersion: target.face_version, employees: rows });
       } catch (err) {
         this.devices.log(target.id, `Biometric copy failed: ${err.message}`, 'error');
         results.push({ deviceId: target.id, device: target.name, mode: target.mode, ok: false, error: err.message, employees: [] });
@@ -183,22 +202,61 @@ class BiometricService {
     return { fetched, results };
   }
 
-  _copyToPush(target, codes, employees, templatesFor) {
+  /** Algorithm version of a stored template: BIODATA says it, otherwise its source device does. */
+  _templateVersion(rec) {
+    const cat = category(rec);
+    if (rec.kind === 'bio') {
+      const extra = rec.extra ? JSON.parse(rec.extra) : {};
+      if (majorVersion(extra.MajorVer)) return majorVersion(extra.MajorVer);
+    }
+    return rec.source_device_id ? deviceVersion(this.devices.get(rec.source_device_id), cat) : null;
+  }
+
+  /** Splits templates into ones safe to send and a note about the rest. */
+  _checkVersions(recs, target, force) {
+    const use = [];
+    const notes = [];
+    const mismatch = new Map();
+    let unknown = false;
+    for (const r of recs) {
+      const cat = category(r);
+      const from = this._templateVersion(r);
+      const to = deviceVersion(target, cat);
+      if (from && to && from !== to) {
+        const key = `${cat}:${from}:${to}`;
+        mismatch.set(key, (mismatch.get(key) || 0) + 1);
+        if (force) use.push(r);
+        continue;
+      }
+      if (!from || !to) unknown = true;
+      use.push(r);
+    }
+    for (const [key, n] of mismatch) {
+      const [cat, from, to] = key.split(':');
+      notes.push(`${n} ${LABEL[cat]} template(s) ${force ? 'sent although' : 'not sent:'} algorithm ${from}, target uses ${to}`);
+    }
+    if (unknown && use.length) notes.push('Algorithm version unknown for some templates; check on the machine');
+    return { use, note: notes.join('. ') };
+  }
+
+  _copyToPush(target, codes, employees, templatesFor, check) {
     const rows = [];
     for (const code of codes) {
       const emp = employees.get(code);
-      const recs = templatesFor(code);
+      const all = templatesFor(code);
       if (!emp) { rows.push({ code, status: 'skipped', note: 'Unknown employee' }); continue; }
-      if (!recs.length) { rows.push({ code, status: 'skipped', note: 'No stored biometrics' }); continue; }
+      if (!all.length) { rows.push({ code, status: 'skipped', note: 'No stored biometrics' }); continue; }
+      const { use: recs, note } = check(all);
+      if (!recs.length) { rows.push({ code, status: 'skipped', note }); continue; }
       this.devices.queueCommand(target.id, userInfoCommand(emp));
       for (const r of recs) this.devices.queueCommand(target.id, admsCommand(code, r));
-      rows.push({ code, status: 'queued', ...counts(recs) });
+      rows.push({ code, status: 'queued', ...counts(recs), note });
     }
     this.devices.log(target.id, `Queued biometrics for ${rows.filter((r) => r.status === 'queued').length} employee(s)`);
     return rows;
   }
 
-  async _copyToPull(target, codes, employees, templatesFor) {
+  async _copyToPull(target, codes, employees, templatesFor, check) {
     return this.devices._serial(target.id, () =>
       this.devices.withClient(target, async (zk) => {
         const existing = await zk.getUsers();
@@ -210,10 +268,16 @@ class BiometricService {
           const recs = templatesFor(code);
           if (!emp) { rows.push({ code, status: 'skipped', note: 'Unknown employee' }); continue; }
           // The TCP/IP protocol only carries fingerprints; BIODATA type 1 is the same template.
-          const fingers = recs.filter((r) => category(r) === 'finger');
-          const others = recs.length - fingers.length;
-          if (!fingers.length) {
+          const allFingers = recs.filter((r) => category(r) === 'finger');
+          const others = recs.length - allFingers.length;
+          if (!allFingers.length) {
             rows.push({ code, status: 'skipped', note: others ? 'Face/palm can only be copied to ADMS devices' : 'No stored fingerprints' });
+            continue;
+          }
+          const { use: fingers, note: versionNote } = check(allFingers);
+          const otherNote = others ? `${others} face/palm template(s) need an ADMS device` : '';
+          if (!fingers.length) {
+            rows.push({ code, status: 'skipped', note: [versionNote, otherNote].filter(Boolean).join('. ') });
             continue;
           }
           const match = existing.find((u) => u.userId === code);
@@ -222,7 +286,7 @@ class BiometricService {
             user: { uid, userId: code, name: emp.name, card: Number(emp.card_no) || 0, privilege: match?.privilege || 0, password: match?.password || '' },
             fingers: fingers.map((r) => ({ fid: r.kind === 'finger' ? r.idx : idxFromExtra(r), valid: r.valid, template: Buffer.from(r.template, 'base64') })),
           });
-          rows.push({ code, status: 'copied', finger: fingers.length, note: others ? `${others} face/palm template(s) need an ADMS device` : '' });
+          rows.push({ code, status: 'copied', finger: fingers.length, note: [versionNote, otherNote].filter(Boolean).join('. ') });
         }
         if (entries.length) await zk.saveUserTemplates(entries);
         this.devices.log(target.id, `Copied fingerprints for ${entries.length} employee(s)`);
@@ -252,4 +316,4 @@ function userInfoCommand(emp) {
   ].join('\t')}`;
 }
 
-module.exports = { BiometricService, saveTemplates, category, admsCommand, userInfoCommand };
+module.exports = { BiometricService, saveTemplates, category, admsCommand, userInfoCommand, majorVersion };

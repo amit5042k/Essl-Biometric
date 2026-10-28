@@ -111,6 +111,7 @@ class DeviceService {
         this.db
           .prepare(
             `UPDATE devices SET serial_number = COALESCE(?, serial_number), firmware = ?, model = COALESCE(model, ?),
+               fp_version = ?, face_version = ?,
                user_count = ?, log_count = ?, last_seen = ?, last_sync = ?, last_error = NULL,
                last_time_sync = CASE WHEN ? THEN ? ELSE last_time_sync END
              WHERE id = ?`
@@ -119,6 +120,8 @@ class DeviceService {
             result.info.serialNumber || null,
             result.info.firmware,
             result.info.deviceName,
+            result.info.fpVersion,
+            result.info.faceVersion,
             result.users,
             result.cleared ? 0 : result.logs,
             now,
@@ -143,8 +146,8 @@ class DeviceService {
       const device = this.requirePull(deviceId);
       const info = await this.withClient(device, (zk) => zk.getInfo());
       this.db
-        .prepare('UPDATE devices SET serial_number = COALESCE(?, serial_number), firmware = ?, last_seen = ?, last_error = NULL WHERE id = ?')
-        .run(info.serialNumber || null, info.firmware, T.nowLocal(), device.id);
+        .prepare('UPDATE devices SET serial_number = COALESCE(?, serial_number), firmware = ?, fp_version = ?, face_version = ?, last_seen = ?, last_error = NULL WHERE id = ?')
+        .run(info.serialNumber || null, info.firmware, info.fpVersion, info.faceVersion, T.nowLocal(), device.id);
       return info;
     });
   }

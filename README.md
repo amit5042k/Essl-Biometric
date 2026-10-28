@@ -210,7 +210,11 @@ All endpoints are under `/api` and require the session cookie from `POST /api/lo
     (use *Re-upload all* on the Devices page to collect templates enrolled earlier).
   - TCP/IP targets receive fingerprints only; face and palm templates can only be sent to ADMS targets.
   - Templates only work between machines using the same algorithm (e.g. ZKFinger 10, the same face engine).
-    Check one employee on the target machine after copying.
+    The app reads each machine's fingerprint/face algorithm version (TCP/IP: on sync; ADMS: from the device's
+    INFO / options / BIODATA uploads), shows it on the Devices page, and skips templates whose version differs
+    from the target unless *Send even when versions differ* is ticked. Unknown versions are sent with a warning.
+  - Classic ↔ Orcus: user records and (if both have a fingerprint sensor with the same algorithm) fingerprints
+    can be copied; face templates cannot, because the face engines differ.
   - Copies of the templates are kept in the database so they can be sent later; they can be deleted per
     employee (click the count in the *Biometrics* column). Treat the database file as sensitive personal data.
 - Pull mode reads the full device log on every sync (the protocol has no "since" filter). Duplicates are ignored.

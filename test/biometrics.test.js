@@ -121,3 +121,52 @@ test('ADMS templates are stored and copied to ADMS and TCP/IP devices', async ()
     await sim.close();
   }
 });
+
+test('reads algorithm versions and blocks mismatched copies unless forced', async () => {
+  const a = createSimulator({ serialNumber: 'CLASSIC', fpVersion: '10', users: [{ userId: '1', name: 'Asha' }], templates: [{ uid: 1, fid: 2, template: tpl(7) }] });
+  const b = createSimulator({ serialNumber: 'NEWFP', fpVersion: '12' });
+  const pa = await a.listen(0, '127.0.0.1');
+  const pb = await b.listen(0, '127.0.0.1');
+  const t = await startApp({ adms: { autoApprove: true, timeZone: '330', delay: 10 } });
+  try {
+    await t.login();
+    const info = (await t.call('POST', '/api/devices/test', { ip: '127.0.0.1', port: pa })).data;
+    assert.strictEqual(info.fpVersion, '10');
+    assert.strictEqual(info.faceVersion, null, 'no face engine reported');
+
+    const src = (await t.call('POST', '/api/devices', { name: 'Classic', mode: 'pull', ip: '127.0.0.1', port: pa })).data.id;
+    const dst = (await t.call('POST', '/api/devices', { name: 'New', mode: 'pull', ip: '127.0.0.1', port: pb })).data.id;
+    await t.call('POST', `/api/devices/${src}/sync`);
+    await t.call('POST', `/api/devices/${dst}/sync`);
+    const devs = (await t.call('GET', '/api/devices')).data;
+    assert.deepStrictEqual(devs.map((d) => d.fp_version).sort(), ['10', '12']);
+
+    // ADMS device reports versions in INFO (6th = fingerprint, 7th = face algorithm).
+    await t.call('GET', '/iclock/getrequest?SN=ORCUS9&INFO=Ver 8.0.4,10,5,100,10.0.0.9,10,7');
+    const orcus = t.db.prepare(`SELECT * FROM devices WHERE serial_number = 'ORCUS9'`).get();
+    assert.deepStrictEqual([orcus.fp_version, orcus.face_version], ['10', '7']);
+
+    let r = await t.call('POST', '/api/biometrics/copy', { codes: ['1'], sourceDeviceId: src, targetDeviceIds: [dst, orcus.id] });
+    const [toNew, toOrcus] = r.data.results;
+    assert.strictEqual(toNew.employees[0].status, 'skipped');
+    assert.strictEqual(toNew.employees[0].note, '1 fingerprint template(s) not sent: algorithm 10, target uses 12');
+    assert.strictEqual(b.state.templates.length, 0, 'nothing written on mismatch');
+    assert.strictEqual(toOrcus.employees[0].status, 'queued', 'same version is copied');
+    assert.strictEqual(toOrcus.employees[0].note, '');
+
+    r = await t.call('POST', '/api/biometrics/copy', { codes: ['1'], targetDeviceIds: [dst], force: true });
+    assert.strictEqual(r.data.results[0].employees[0].status, 'copied');
+    assert.match(r.data.results[0].employees[0].note, /^1 fingerprint template\(s\) sent although algorithm 10, target uses 12/);
+    assert.strictEqual(b.state.templates.length, 1);
+
+    // BIODATA uploads carry the version; a device that never reported one learns it.
+    await t.call('POST', '/iclock/cdata?SN=ORCUS10&table=BIODATA', 'BIODATA Pin=5\tNo=0\tIndex=0\tValid=1\tDuress=0\tType=9\tMajorVer=5\tMinorVer=8\tFormat=0\tTmp=QUJD');
+    assert.strictEqual(t.db.prepare(`SELECT face_version FROM devices WHERE serial_number = 'ORCUS10'`).get().face_version, '5');
+    r = await t.call('POST', '/api/biometrics/copy', { codes: ['5'], targetDeviceIds: [orcus.id], types: ['face'] });
+    assert.strictEqual(r.data.results[0].employees[0].note, '1 face template(s) not sent: algorithm 5, target uses 7');
+  } finally {
+    await t.close();
+    await a.close();
+    await b.close();
+  }
+});

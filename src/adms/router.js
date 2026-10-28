@@ -103,6 +103,12 @@ function createAdmsRouter({ db, config, logger = console }) {
       const templates = P.parseTemplates(body, table);
       if (templates.length) {
         saveTemplates(db, device.id, templates);
+        // BIODATA carries the algorithm version; learn it if the device never reported it.
+        for (const t of templates) {
+          if (t.kind !== 'bio' || !t.extra?.MajorVer) continue;
+          const col = t.bioType === 1 ? 'fp_version' : t.bioType === 2 || t.bioType === 9 ? 'face_version' : null;
+          if (col) db.prepare(`UPDATE devices SET ${col} = COALESCE(${col}, ?) WHERE id = ?`).run(String(t.extra.MajorVer), device.id);
+        }
         db.prepare('INSERT INTO device_logs (device_id, message) VALUES (?, ?)').run(device.id, `Received ${templates.length} biometric template(s)`);
       }
       if (table === 'OPERLOG' && stamp) db.prepare('UPDATE devices SET op_stamp = ? WHERE id = ?').run(stamp, device.id);
@@ -110,10 +116,15 @@ function createAdmsRouter({ db, config, logger = console }) {
     }
     if (table === 'OPTIONS' || table === 'INFO') {
       const info = P.parseDeviceInfo(body);
-      db.prepare('UPDATE devices SET firmware = COALESCE(?, firmware), model = COALESCE(?, model), user_count = COALESCE(?, user_count) WHERE id = ?').run(
+      db.prepare(
+        `UPDATE devices SET firmware = COALESCE(?, firmware), model = COALESCE(?, model), user_count = COALESCE(?, user_count),
+           fp_version = COALESCE(?, fp_version), face_version = COALESCE(?, face_version) WHERE id = ?`
+      ).run(
         info.FWVersion || info.FirmVer || null,
         info.DeviceName || null,
         info.UserCount ? Number(info.UserCount) : null,
+        info.FPVersion || info.ZKFPVersion || null,
+        info.FaceVersion || info.ZKFaceVersion || null,
         device.id
       );
       return text(res, 'OK');
@@ -127,12 +138,14 @@ function createAdmsRouter({ db, config, logger = console }) {
     const device = guard(req, res);
     if (!device) return;
     if (req.query.INFO) {
-      // INFO=fw version,user count,fp count,att count,ip,...
-      const f = String(req.query.INFO).split(',');
-      db.prepare('UPDATE devices SET firmware = ?, user_count = ?, log_count = ? WHERE id = ?').run(
+      // INFO=fw version,user count,fp count,att count,ip,fp algorithm version,face algorithm version,...
+      const f = String(req.query.INFO).split(',').map((x) => x.trim());
+      db.prepare('UPDATE devices SET firmware = ?, user_count = ?, log_count = ?, fp_version = COALESCE(?, fp_version), face_version = COALESCE(?, face_version) WHERE id = ?').run(
         f[0] || device.firmware,
         Number(f[1]) || device.user_count,
         Number(f[3]) || device.log_count,
+        f[5] || null,
+        f[6] || null,
         device.id
       );
     }

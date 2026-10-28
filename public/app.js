@@ -238,7 +238,7 @@ views.devices = async (el) => {
       <td><b>${esc(d.name)}</b><br><span class="muted">${esc(d.model || '')} ${esc(d.location || '')}</span></td>
       <td>${d.mode === 'push' ? 'ADMS' : `TCP/IP ${esc(d.transport?.toUpperCase())}`}</td>
       <td>${d.mode === 'pull' ? `${esc(d.ip)}:${esc(d.port)}` : ''}<br><span class="muted">${esc(d.serial_number || '')}</span></td>
-      <td>${esc(d.firmware || '')}</td><td>${d.user_count ?? ''}</td><td>${d.punch_count}</td>
+      <td>${esc(d.firmware || '')}${algText(d) ? `<br><span class="muted" title="Matching algorithm versions">${esc(algText(d))}</span>` : ''}</td><td>${d.user_count ?? ''}</td><td>${d.punch_count}</td>
       <td>${esc(d.last_sync || '')}</td>
       <td>${!d.enabled ? '<span class="warn">Disabled</span>' : d.last_error ? `<span class="bad">${esc(d.last_error)}</span>` : '<span class="ok">OK</span>'}${d.pending_commands ? `<br><span class="muted">${d.pending_commands} queued cmd</span>` : ''}</td>
       </tr><tr class="action-row"><td colspan="8"><div class="actions btns" data-id="${d.id}" data-mode="${d.mode}">
@@ -447,6 +447,8 @@ async function employeeReport(code) {
 
 // -------------------------------------------------------------- biometrics
 const BIO_LABEL = { finger: 'Fingerprint', face: 'Face', palm: 'Palm', other: 'Other' };
+/** "FP alg 10 · Face alg 7" for devices that reported their matching algorithm versions. */
+const algText = (d) => [d.fp_version && `FP alg ${d.fp_version}`, d.face_version && `Face alg ${d.face_version}`].filter(Boolean).join(' · ');
 
 /** Lists the templates stored for one employee; offers to delete them. Resolves true if deleted. */
 async function biometricDetails(code) {
@@ -464,7 +466,7 @@ async function biometricDetails(code) {
 async function copyBiometrics(codes) {
   const devs = (await get('/devices')).filter((d) => d.enabled);
   if (devs.length < 1) { toast('Add a device first', true); return null; }
-  const label = (d) => `${d.name} (${d.mode === 'push' ? 'ADMS' : 'TCP/IP'})`;
+  const label = (d) => `${d.name} (${[d.mode === 'push' ? 'ADMS' : 'TCP/IP', algText(d) || 'algorithm not reported'].join(' · ')})`;
   const res = await formModal(`Copy biometrics – ${codes.length} employee(s)`, [
     { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}` },
     { name: 'sourceDeviceId', label: 'Copy from', type: 'select', value: '', full: true, options: [['', 'Templates already stored in the app (from any machine)'], ...devs.map((d) => [d.id, label(d)])],
@@ -472,12 +474,13 @@ async function copyBiometrics(codes) {
     { name: 'types', label: 'What to copy', type: 'checks', value: ['finger', 'face'], options: [['finger', 'Fingerprints'], ['face', 'Face'], ['palm', 'Palm']] },
     { name: 'targetDeviceIds', label: 'Copy to', type: 'checks', value: [], options: devs.map((d) => [d.id, label(d)]),
       help: 'The employee is created on the target if missing. TCP/IP targets receive fingerprints only; face and palm need an ADMS target.' },
-    { type: 'html', html: '<b>Compatibility:</b> templates work only between machines that use the same algorithm version (for example ZKFinger 10, or the same face engine). Check one employee on the target machine after copying.' },
+    { type: 'html', html: '<b>Compatibility:</b> templates work only between machines that use the same algorithm version (shown in brackets). Templates whose version differs from a target are skipped; when a version is not reported, they are sent with a warning. Sync a TCP/IP machine once to read its versions.' },
+    { name: 'force', label: 'Different versions', type: 'checks', value: [], options: [['1', 'Send even when versions differ (not recommended: the machine may accept them but never match)']] },
   ], (v) => {
     if (!v.targetDeviceIds.length) throw new Error('Choose at least one machine under "Copy to"');
     if (!v.types.length) throw new Error('Choose what to copy');
     if (v.sourceDeviceId && v.targetDeviceIds.includes(String(v.sourceDeviceId))) throw new Error('The source machine cannot also be a target');
-    return post('/biometrics/copy', { codes, sourceDeviceId: v.sourceDeviceId || null, targetDeviceIds: v.targetDeviceIds.map(Number), types: v.types });
+    return post('/biometrics/copy', { codes, sourceDeviceId: v.sourceDeviceId || null, targetDeviceIds: v.targetDeviceIds.map(Number), types: v.types, force: v.force.includes('1') });
   }, 'Copy');
   if (!res) return null;
   const STATUS = { copied: '<span class="ok">Copied</span>', queued: '<span class="ok">Queued</span>', skipped: '<span class="warn">Skipped</span>' };

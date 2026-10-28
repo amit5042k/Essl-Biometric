@@ -337,15 +337,19 @@ class ZKClient {
   }
 
   async getInfo() {
-    const [serialNumber, deviceName, platform, firmware, time, sizes] = [
+    const [serialNumber, deviceName, platform, firmware, time, sizes, fpVersion, faceVersion] = [
       await this.getOption('~SerialNumber'),
       await this.getOption('~DeviceName'),
       await this.getOption('~Platform'),
       await this.getVersion(),
       await this.getTime(),
       await this.getSizes(),
+      // Fingerprint / face matching algorithm versions (e.g. ZKFinger "10").
+      // Devices without the feature answer empty or with an error.
+      await this.getOption('~ZKFPVersion').catch(() => null),
+      await this.getOption('ZKFaceVersion').catch(() => null),
     ];
-    return { serialNumber, deviceName, platform, firmware, time, sizes };
+    return { serialNumber, deviceName, platform, firmware, time, sizes, fpVersion: fpVersion || null, faceVersion: faceVersion || null };
   }
 
   enableDevice() {

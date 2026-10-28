@@ -64,6 +64,8 @@ function createSimulator({
   users = [],
   logs = [],
   templates = [],
+  fpVersion = '10',
+  faceVersion = '',
   chunkSize = 300,
 } = {}) {
   const state = {
@@ -180,6 +182,8 @@ function createSimulator({
             '~SerialNumber': serialNumber,
             '~DeviceName': 'eSSL Simulator',
             '~Platform': 'ZMM220_TFT',
+            '~ZKFPVersion': fpVersion,
+            ZKFaceVersion: faceVersion,
           };
           return send(C.CMD_ACK_OK, Buffer.from(`${key}=${values[key] ?? ''}\0`));
         }
