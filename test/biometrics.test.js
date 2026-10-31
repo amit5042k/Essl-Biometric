@@ -114,8 +114,12 @@ test('ADMS templates are stored and copied to ADMS and TCP/IP devices', async ()
 
     // Nothing stored -> reported, not silently ignored.
     await t.call('POST', '/api/employees', { code: '8', name: 'No Prints' });
-    r = await t.call('POST', '/api/biometrics/copy', { codes: ['8'], targetDeviceIds: [orcus2] });
-    assert.strictEqual(r.data.results[0].employees[0].note, 'No stored biometrics');
+    r = await t.call('POST', '/api/biometrics/copy', { codes: ['8'], targetDeviceIds: [orcus2, pull] });
+    assert.deepStrictEqual(r.data.results.map((d) => [d.employees[0].status, d.employees[0].note]),
+      [['user-queued', 'No stored biometrics'], ['user', 'No stored biometrics']]);
+    assert.ok(sim.state.users.find((x) => x.userId === '8' && x.name === 'No Prints'), 'user created on TCP/IP target');
+    r = await t.call('GET', '/iclock/getrequest?SN=ORCUS2');
+    assert.match(r.data, /DATA UPDATE USERINFO PIN=8\tName=No Prints/);
   } finally {
     await t.close();
     await sim.close();
@@ -148,9 +152,10 @@ test('reads algorithm versions and blocks mismatched copies unless forced', asyn
 
     let r = await t.call('POST', '/api/biometrics/copy', { codes: ['1'], sourceDeviceId: src, targetDeviceIds: [dst, orcus.id] });
     const [toNew, toOrcus] = r.data.results;
-    assert.strictEqual(toNew.employees[0].status, 'skipped');
+    assert.strictEqual(toNew.employees[0].status, 'user', 'user record transferred without the fingerprint');
     assert.strictEqual(toNew.employees[0].note, '1 fingerprint template(s) not sent: algorithm 10, target uses 12');
-    assert.strictEqual(b.state.templates.length, 0, 'nothing written on mismatch');
+    assert.strictEqual(b.state.templates.length, 0, 'no template written on mismatch');
+    assert.deepStrictEqual(b.state.users.map((u) => [u.userId, u.name]), [['1', 'Asha']]);
     assert.strictEqual(toOrcus.employees[0].status, 'queued', 'same version is copied');
     assert.strictEqual(toOrcus.employees[0].note, '');
 

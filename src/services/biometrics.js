@@ -239,20 +239,20 @@ class BiometricService {
     return { use, note: notes.join('. ') };
   }
 
+  // The user record (ID, name, card) is always transferred; templates only when compatible.
+  // Status: 'queued' (user + templates), 'user-queued' (user only), 'skipped'.
   _copyToPush(target, codes, employees, templatesFor, check) {
     const rows = [];
     for (const code of codes) {
       const emp = employees.get(code);
-      const all = templatesFor(code);
       if (!emp) { rows.push({ code, status: 'skipped', note: 'Unknown employee' }); continue; }
-      if (!all.length) { rows.push({ code, status: 'skipped', note: 'No stored biometrics' }); continue; }
-      const { use: recs, note } = check(all);
-      if (!recs.length) { rows.push({ code, status: 'skipped', note }); continue; }
+      const all = templatesFor(code);
+      const { use: recs, note } = all.length ? check(all) : { use: [], note: 'No stored biometrics' };
       this.devices.queueCommand(target.id, userInfoCommand(emp));
       for (const r of recs) this.devices.queueCommand(target.id, admsCommand(code, r));
-      rows.push({ code, status: 'queued', ...counts(recs), note });
+      rows.push({ code, status: recs.length ? 'queued' : 'user-queued', ...counts(recs), note });
     }
-    this.devices.log(target.id, `Queued biometrics for ${rows.filter((r) => r.status === 'queued').length} employee(s)`);
+    this.devices.log(target.id, `Queued ${rows.filter((r) => r.status !== 'skipped').length} user(s) with their compatible biometrics`);
     return rows;
   }
 
@@ -263,6 +263,7 @@ class BiometricService {
         let nextUid = existing.reduce((m, u) => Math.max(m, u.uid), 0) + 1;
         const rows = [];
         const entries = [];
+        const userOnly = [];
         for (const code of codes) {
           const emp = employees.get(code);
           const recs = templatesFor(code);
@@ -270,14 +271,11 @@ class BiometricService {
           // The TCP/IP protocol only carries fingerprints; BIODATA type 1 is the same template.
           const allFingers = recs.filter((r) => category(r) === 'finger');
           const others = recs.length - allFingers.length;
-          if (!allFingers.length) {
-            rows.push({ code, status: 'skipped', note: others ? 'Face/palm can only be copied to ADMS devices' : 'No stored fingerprints' });
-            continue;
-          }
-          const { use: fingers, note: versionNote } = check(allFingers);
+          const { use: fingers, note: versionNote } = allFingers.length ? check(allFingers) : { use: [], note: '' };
           const otherNote = others ? `${others} face/palm template(s) need an ADMS device` : '';
           if (!fingers.length) {
-            rows.push({ code, status: 'skipped', note: [versionNote, otherNote].filter(Boolean).join('. ') });
+            userOnly.push(emp);
+            rows.push({ code, status: 'user', note: [recs.length ? versionNote : 'No stored biometrics', otherNote].filter(Boolean).join('. ') });
             continue;
           }
           const match = existing.find((u) => u.userId === code);
@@ -289,7 +287,9 @@ class BiometricService {
           rows.push({ code, status: 'copied', finger: fingers.length, note: [versionNote, otherNote].filter(Boolean).join('. ') });
         }
         if (entries.length) await zk.saveUserTemplates(entries);
-        this.devices.log(target.id, `Copied fingerprints for ${entries.length} employee(s)`);
+        // setUser looks the user up again, so it sees the ones written above.
+        for (const emp of userOnly) await zk.setUser({ userId: emp.code, name: emp.name, card: emp.card_no });
+        this.devices.log(target.id, `Transferred ${entries.length + userOnly.length} user(s); fingerprints for ${entries.length}`);
         return rows;
       })
     );

@@ -15,9 +15,9 @@ A Node.js attendance management system for **eSSL Classic** (K21, K30, X990, MB1
   ADMS command queue.
 - **Employees**: master data, departments, shift assignment, CSV import, auto-import of users enrolled on devices,
   upload employees (ID, name, card) to devices.
-- **Copy biometrics**: tick employees on the Employees page and copy their fingerprint / face / palm templates
-  from one machine (or the app's stored copies) to one or more other machines. Only the selected employees are
-  copied.
+- **Transfer employees between machines** (e.g. Classic → Orcus): tick employees on the Employees page and send
+  them to one or more machines. The user record (ID, name, card) is always created; fingerprint / face / palm
+  templates go along when the target uses the same algorithm. Only the selected employees are transferred.
 - **Punch logs**: de-duplicated storage of every punch, filters, CSV export, manual punches (regularisation)
   with reason.
 - **Rules**: shifts with grace time, early-exit grace, half/full-day thresholds, weekly offs, overtime, night shifts
@@ -205,7 +205,8 @@ All endpoints are under `/api` and require the session cookie from `POST /api/lo
 
 ## Notes and limits
 
-- **Copying biometrics** (Employees → tick employees → *Copy biometrics*):
+- **Transferring employees** (Employees → tick employees → *Transfer to machines*):
+  - The user record is always created/updated on each target; biometrics are added when compatible.
   - TCP/IP machines are read on the spot; ADMS machines upload templates by themselves when someone enrols
     (use *Re-upload all* on the Devices page to collect templates enrolled earlier).
   - TCP/IP targets receive fingerprints only; face and palm templates can only be sent to ADMS targets.

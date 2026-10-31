@@ -355,7 +355,7 @@ views.employees = async (el) => {
     <div class="toolbar"><h1>Employees</h1><span class="spacer"></span>
       <label>Search<input id="q" placeholder="code / name / dept"></label>
       <label>Status<select id="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select></label>
-      <button class="btn" id="copyBtn" disabled>Copy biometrics</button>
+      <button class="btn" id="copyBtn" disabled title="Tick employees first">Transfer to machines</button>
       <button class="btn" id="importBtn">Import CSV</button>
       <button class="btn primary" id="addBtn">Add employee</button></div>
     <div id="list"></div>`;
@@ -363,7 +363,7 @@ views.employees = async (el) => {
   const selected = new Set();
   const syncSelection = () => {
     $('#copyBtn').disabled = !selected.size;
-    $('#copyBtn').textContent = selected.size ? `Copy biometrics (${selected.size})` : 'Copy biometrics';
+    $('#copyBtn').textContent = selected.size ? `Transfer to machines (${selected.size})` : 'Transfer to machines';
   };
   const load = async () => {
     const [list, bio] = await Promise.all([
@@ -483,30 +483,37 @@ async function copyBiometrics(codes) {
   const devs = (await get('/devices')).filter((d) => d.enabled);
   if (devs.length < 1) { toast('Add a device first', true); return null; }
   const label = (d) => `${d.name} (${[d.mode === 'push' ? 'ADMS' : 'TCP/IP', algText(d) || 'algorithm not reported'].join(' · ')})`;
-  const res = await formModal(`Copy biometrics – ${codes.length} employee(s)`, [
+  const res = await formModal(`Transfer ${codes.length} employee(s) to machines`, [
     { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}` },
-    { name: 'sourceDeviceId', label: 'Copy from', type: 'select', value: '', full: true, options: [['', 'Templates already stored in the app (from any machine)'], ...devs.map((d) => [d.id, label(d)])],
+    { name: 'sourceDeviceId', label: 'Take biometrics from', type: 'select', value: '', full: true, options: [['', 'Templates already stored in the app (from any machine)'], ...devs.map((d) => [d.id, label(d)])],
       help: 'A TCP/IP machine is read now. An ADMS machine sends templates by itself when someone is enrolled; use <i>Re-upload all</i> on the Devices page to collect ones enrolled earlier.' },
-    { name: 'types', label: 'What to copy', type: 'checks', value: ['finger', 'face'], options: [['finger', 'Fingerprints'], ['face', 'Face'], ['palm', 'Palm']] },
-    { name: 'targetDeviceIds', label: 'Copy to', type: 'checks', value: [], options: devs.map((d) => [d.id, label(d)]),
+    { name: 'types', label: 'Biometrics to include', type: 'checks', value: ['finger', 'face'], options: [['finger', 'Fingerprints'], ['face', 'Face'], ['palm', 'Palm']],
+      help: 'The user record (ID, name, card number) is always transferred, even when no biometric can be.' },
+    { name: 'targetDeviceIds', label: 'Transfer to', type: 'checks', value: [], options: devs.map((d) => [d.id, label(d)]),
       help: 'The employee is created on the target if missing. TCP/IP targets receive fingerprints only; face and palm need an ADMS target.' },
     { type: 'html', html: '<b>Compatibility:</b> templates work only between machines that use the same algorithm version (shown in brackets). Templates whose version differs from a target are skipped; when a version is not reported, they are sent with a warning. Sync a TCP/IP machine once to read its versions.' },
     { name: 'force', label: 'Different versions', type: 'checks', value: [], options: [['1', 'Send even when versions differ (not recommended: the machine may accept them but never match)']] },
   ], (v) => {
-    if (!v.targetDeviceIds.length) throw new Error('Choose at least one machine under "Copy to"');
-    if (!v.types.length) throw new Error('Choose what to copy');
+    if (!v.targetDeviceIds.length) throw new Error('Choose at least one machine under "Transfer to"');
+    if (!v.types.length) throw new Error('Choose at least one biometric type (the user record is always sent)');
     if (v.sourceDeviceId && v.targetDeviceIds.includes(String(v.sourceDeviceId))) throw new Error('The source machine cannot also be a target');
     return post('/biometrics/copy', { codes, sourceDeviceId: v.sourceDeviceId || null, targetDeviceIds: v.targetDeviceIds.map(Number), types: v.types, force: v.force.includes('1') });
-  }, 'Copy');
+  }, 'Transfer');
   if (!res) return null;
-  const STATUS = { copied: '<span class="ok">Copied</span>', queued: '<span class="ok">Queued</span>', skipped: '<span class="warn">Skipped</span>' };
+  const STATUS = {
+    copied: '<span class="ok">Copied</span>',
+    queued: '<span class="ok">Queued</span>',
+    user: '<span class="ok">User copied</span>',
+    'user-queued': '<span class="ok">User queued</span>',
+    skipped: '<span class="warn">Skipped</span>',
+  };
   const what = (e) => [e.finger && `FP ${e.finger}`, e.face && `Face ${e.face}`, e.palm && `Palm ${e.palm}`].filter(Boolean).join(' · ');
   const rows = [];
   for (const d of res.results) {
     if (!d.ok) { rows.push(`<tr><td>${esc(d.device)}</td><td colspan="3" class="bad" style="white-space:normal">${esc(d.error)}</td></tr>`); continue; }
     for (const e of d.employees) rows.push(`<tr><td>${esc(d.device)}</td><td>${esc(e.code)}</td><td>${STATUS[e.status] || esc(e.status)} ${esc(what(e))}</td><td style="white-space:normal">${esc(e.note || '')}</td></tr>`);
   }
-  await showDetails('Copy result', `${res.fetched ? `<p>${esc(res.fetched.message)}</p>` : ''}${table(['Target', 'Employee', 'Result', 'Note'], rows)}
+  await showDetails('Transfer result', `${res.fetched ? `<p>${esc(res.fetched.message)}</p>` : ''}${table(['Target', 'Employee', 'Result', 'Note'], rows)}
     <p class="help">"Queued" means an ADMS machine receives the data when it next connects (usually within a minute); see Devices → Commands.</p>`);
   return res;
 }
