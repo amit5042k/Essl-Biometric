@@ -40,6 +40,7 @@ function requireDate(v, name = 'date') {
 function monthRange(month) {
   if (!/^\d{4}-\d{2}$/.test(String(month || ''))) throw bad('month must be YYYY-MM');
   const [y, m] = month.split('-').map(Number);
+  if (m < 1 || m > 12) throw bad('month must be YYYY-MM');
   return { from: `${month}-01`, to: `${month}-${T.pad(T.daysInMonth(y, m))}` };
 }
 
@@ -51,7 +52,11 @@ function createApiRouter({ db, auth, devices, biometrics }) {
 
   // ------------------------------------------------------------------ auth
   r.post('/login', (req, res) => {
-    const s = auth.login(req.body.username, req.body.password);
+    const s = auth.login(req.body.username, req.body.password, req.ip);
+    if (s?.locked) {
+      res.setHeader('Retry-After', String(s.retryAfter));
+      throw new HttpError(429, `Too many failed sign-ins. Try again in ${Math.ceil(s.retryAfter / 60)} minute(s).`);
+    }
     if (!s) throw new HttpError(401, 'Invalid username or password');
     auth.setCookie(res, s.token, req);
     res.json({ user: s.user });
@@ -215,9 +220,11 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   // ------------------------------------------------------------- employees
   const EMP_FIELDS = ['code', 'name', 'department', 'designation', 'phone', 'email', 'card_no', 'shift_id', 'join_date', 'active'];
 
-  function validateEmployee(e) {
+  // New codes must be safe for every machine; codes that already exist (often
+  // created from a machine's own user ID, e.g. "EMP-07") are kept as they are.
+  function validateEmployee(e, { isNew = true } = {}) {
     if (!String(e.code || '').trim()) throw bad('Employee code (device user ID) is required');
-    if (!/^[A-Za-z0-9]{1,24}$/.test(String(e.code))) throw bad('Employee code must be 1-24 letters/digits');
+    if (isNew && !/^[A-Za-z0-9]{1,24}$/.test(String(e.code))) throw bad('Employee code must be 1-24 letters/digits');
     if (!String(e.name || '').trim()) throw bad('Name is required');
     if (e.join_date && !T.isDate(e.join_date)) throw bad('join_date must be YYYY-MM-DD');
   }
@@ -252,7 +259,7 @@ function createApiRouter({ db, auth, devices, biometrics }) {
     if (!cur) throw new HttpError(404, 'Employee not found');
     const data = pick(req.body, EMP_FIELDS);
     if (data.code && data.code !== cur.code) throw bad('Employee code cannot be changed (it is the device user ID)');
-    validateEmployee({ ...cur, ...data });
+    validateEmployee({ ...cur, ...data }, { isNew: false });
     update(db, 'employees', cur.id, data);
     res.json(db.prepare('SELECT * FROM employees WHERE id = ?').get(cur.id));
   });
@@ -273,13 +280,14 @@ function createApiRouter({ db, auth, devices, biometrics }) {
          phone = COALESCE(excluded.phone, phone), email = COALESCE(excluded.email, email),
          card_no = COALESCE(excluded.card_no, card_no), join_date = COALESCE(excluded.join_date, join_date)`
     );
+    const exists = db.prepare('SELECT 1 FROM employees WHERE code = ?');
     const errors = [];
     let ok = 0;
     db.transaction(() => {
       rows.forEach((row, i) => {
         const e = { department: null, designation: null, phone: null, email: null, card_no: null, join_date: null, ...pick(row, EMP_FIELDS) };
         try {
-          validateEmployee(e);
+          validateEmployee(e, { isNew: !exists.get(String(e.code ?? '')) });
           upsert.run(e);
           ok += 1;
         } catch (err) {
@@ -390,19 +398,25 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   function punchQuery(q) {
     const from = q.from && T.isDate(q.from) ? q.from : T.nowLocal().slice(0, 10);
     const to = q.to && T.isDate(q.to) ? q.to : from;
+    if (to < from) throw bad('"to" date is before "from" date');
     const where = ['p.punch_time >= @from', 'p.punch_time < @to'];
     const args = { from: `${from} 00:00:00`, to: `${T.addDays(to, 1)} 00:00:00` };
     if (q.code) { where.push('p.employee_code = @code'); args.code = q.code; }
     if (q.device) { where.push('p.device_id = @device'); args.device = Number(q.device); }
     if (q.department) { where.push('e.department = @dept'); args.dept = q.department; }
+    const range = { from, to };
     const sql = `FROM punches p LEFT JOIN employees e ON e.code = p.employee_code LEFT JOIN devices d ON d.id = p.device_id WHERE ${where.join(' AND ')}`;
-    return { sql, args };
+    return { sql, args, range };
   }
 
   r.get('/punches', (req, res) => {
     const { sql, args } = punchQuery(req.query);
-    const limit = Math.min(Number(req.query.limit) || 500, 5000);
-    const offset = Number(req.query.offset) || 0;
+    const int = (v, d, min, max) => {
+      const n = Number.parseInt(v, 10);
+      return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : d;
+    };
+    const limit = int(req.query.limit, 500, 1, 5000);
+    const offset = int(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const total = db.prepare(`SELECT COUNT(*) n ${sql}`).get(args).n;
     const rows = db
       .prepare(`SELECT p.*, e.name AS employee_name, e.department, d.name AS device_name ${sql} ORDER BY p.punch_time DESC LIMIT ${limit} OFFSET ${offset}`)
@@ -411,9 +425,9 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   });
 
   r.get('/punches.csv', (req, res) => {
-    const { sql, args } = punchQuery(req.query);
+    const { sql, args, range } = punchQuery(req.query);
     const rows = db.prepare(`SELECT p.*, e.name AS employee_name, e.department, d.name AS device_name ${sql} ORDER BY p.punch_time`).all(args);
-    sendCsv(res, `punches_${req.query.from || 'today'}.csv`, ['Code', 'Name', 'Department', 'Punch Time', 'Device', 'State', 'Verify', 'Source'],
+    sendCsv(res, `punches_${range.from}_${range.to}.csv`, ['Code', 'Name', 'Department', 'Punch Time', 'Device', 'State', 'Verify', 'Source'],
       rows.map((p) => [p.employee_code, p.employee_name, p.department, p.punch_time, p.device_name, p.punch_state, p.verify_type, p.source]));
   });
 
@@ -477,6 +491,7 @@ function createApiRouter({ db, auth, devices, biometrics }) {
     if (!req.query.code) throw bad('code is required');
     const from = requireDate(req.query.from, 'from');
     const to = requireDate(req.query.to, 'to');
+    if (to < from) throw bad('"to" date is before "from" date');
     if (T.toMinutes(to) - T.toMinutes(from) > 366 * 1440) throw bad('Range too large (max 1 year)');
     const { rows } = buildAttendance(db, { from, to, employeeCode: req.query.code, includeInactive: true });
     if (!rows.length) throw new HttpError(404, 'Employee not found');

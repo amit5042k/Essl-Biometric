@@ -50,8 +50,12 @@ function nowLocal(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+/** "YYYY-MM-DD" that is a real calendar date (rejects 2024-02-31, 2024-13-01). */
 function isDate(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() + 1 === Number(m[2]) && d.getUTCDate() === Number(m[3]);
 }
 
 /** Normalises the many timestamp formats devices send into "YYYY-MM-DD HH:MM:SS". */

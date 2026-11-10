@@ -36,9 +36,29 @@ function parseCookies(header) {
 function createAuth(db, { sessionHours }) {
   const ttl = sessionHours * 3600 * 1000;
 
-  function login(username, password) {
+  // Password guessing protection: after MAX_FAILURES wrong passwords for a
+  // username from one address, refuse further tries for LOCK_MS.
+  const MAX_FAILURES = 5;
+  const LOCK_MS = 15 * 60 * 1000;
+  const failures = new Map(); // "ip|username" -> { count, first, lockedUntil }
+
+  /** @returns {{token,user}|null|{locked:true, retryAfter:number}} */
+  function login(username, password, ip = '') {
+    const key = `${ip}|${String(username || '').toLowerCase()}`;
+    const now = Date.now();
+    const f = failures.get(key);
+    if (f && f.lockedUntil > now) return { locked: true, retryAfter: Math.ceil((f.lockedUntil - now) / 1000) };
+
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || ''));
-    if (!user || !verifyPassword(password, user.password_hash)) return null;
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      const rec = f && now - f.first < LOCK_MS ? f : { count: 0, first: now, lockedUntil: 0 };
+      rec.count += 1;
+      if (rec.count >= MAX_FAILURES) rec.lockedUntil = now + LOCK_MS;
+      failures.set(key, rec);
+      if (failures.size > 10000) failures.clear(); // bound memory under a flood
+      return null;
+    }
+    failures.delete(key);
     const token = crypto.randomBytes(32).toString('hex');
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
     db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, user.id, Date.now() + ttl);

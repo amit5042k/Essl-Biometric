@@ -67,7 +67,7 @@ recommended.
    - Application startup file: `app.js`
 2. Upload the project files (everything except `node_modules/` and `data/`) into the application root with
    File Manager or FTP.
-3. In the app's page add environment variables: `ADMIN_PASSWORD`, `ADMS_TIMEZONE=330`, and
+3. In the app's page add environment variables: `ADMIN_PASSWORD`, `TIMEZONE=Asia/Kolkata`, and
    `DB_PATH=/home/<cpanel-user>/essl-data/attendance.db` (a folder outside `public_html`).
 4. Click **Run NPM Install**, then **Restart**.
 5. Do **not** enable "Force HTTPS redirect" for this subdomain: most terminals send ADMS data over plain HTTP on
@@ -124,7 +124,9 @@ the server and the device.
 3. Punches arrive in real time. Employee uploads, *Clear logs*, *Restart* and *Re-upload all* are queued and
    delivered the next time the device polls (every few seconds).
 
-`ADMS_TIMEZONE` is sent to the device during the handshake (`330` = IST, +05:30).
+**Time zone:** the machines keep local time, so the app works in `TIMEZONE` (default `Asia/Kolkata`) whatever
+the server's own clock zone is (VPS and shared hosting usually run on UTC). The matching offset is sent to ADMS
+devices during the handshake; override it with `ADMS_TIMEZONE` (`330` = IST, +05:30) only if needed.
 
 ## How attendance is calculated
 

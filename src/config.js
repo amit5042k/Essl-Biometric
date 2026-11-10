@@ -11,7 +11,26 @@ try {
 const env = process.env;
 const bool = (v, d) => (v === undefined ? d : /^(1|true|yes|on)$/i.test(v));
 
+// Machines keep local wall-clock time, so the app must use the machines' time
+// zone, not the server's (VPS and shared hosts usually run on UTC). Node
+// applies a change to process.env.TZ immediately.
+function validZone(zone) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const timezone = env.TIMEZONE || 'Asia/Kolkata';
+if (validZone(timezone)) {
+  process.env.TZ = timezone;
+} else {
+  console.warn(`[config] TIMEZONE "${timezone}" is not a valid time zone; using the server's time zone`);
+}
+
 module.exports = {
+  timezone: process.env.TZ,
   port: Number(env.PORT) || 3000,
   host: env.HOST || '0.0.0.0',
   dbPath: env.DB_PATH || path.join(__dirname, '..', 'data', 'attendance.db'),
@@ -26,7 +45,8 @@ module.exports = {
     // serial numbers are added as disabled devices and must be enabled in the UI.
     autoApprove: bool(env.ADMS_AUTO_APPROVE, false),
     // Server time zone sent to the device (hours, or minutes for e.g. 330 = +05:30)
-    timeZone: env.ADMS_TIMEZONE || '330',
+    // Defaults to the offset of TIMEZONE (330 for Asia/Kolkata).
+    timeZone: env.ADMS_TIMEZONE || String(-new Date().getTimezoneOffset()),
     delay: Number(env.ADMS_DELAY) || 10,
   },
 

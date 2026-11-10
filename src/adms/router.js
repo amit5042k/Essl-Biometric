@@ -40,7 +40,13 @@ function createAdmsRouter({ db, config, logger = console }) {
       logger.log(`[adms] new device ${sn} registered (${device.enabled ? 'enabled' : 'awaiting approval'})`);
       db.prepare('INSERT INTO device_logs (device_id, message) VALUES (?, ?)').run(device.id, `Device registered from ${clientIp(req)}`);
     }
-    db.prepare('UPDATE devices SET last_seen = ?, ip = ? WHERE id = ?').run(T.nowLocal(), clientIp(req), device.id);
+    // Only ADMS devices take their address from the request; a TCP/IP device
+    // that also has ADMS switched on keeps the IP the app connects to.
+    if (device.mode === 'push') {
+      db.prepare('UPDATE devices SET last_seen = ?, ip = ? WHERE id = ?').run(T.nowLocal(), clientIp(req), device.id);
+    } else {
+      db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(T.nowLocal(), device.id);
+    }
     return { device };
   }
 

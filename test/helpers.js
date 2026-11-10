@@ -42,6 +42,7 @@ async function startApp(overrides = {}) {
     devices,
     base,
     call,
+    cookie: () => cookie,
     login: () => call('POST', '/api/login', { username: 'admin', password: 'secret1' }),
     close: () => new Promise((r) => server.close(r)).then(() => db.close()),
   };
