@@ -89,7 +89,9 @@ function formModal(title, fields, onSubmit, okLabel = 'Save', { cancel = true } 
     } else if (f.type === 'html') {
       return `<div class="full help">${f.html}</div>`;
     } else {
-      input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}" ${f.required ? 'required' : ''} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''}>`;
+      // f.suggest: values offered while typing (free text is still allowed)
+      const list = f.suggest ? `<datalist id="dl-${f.name}">${f.suggest.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>` : '';
+      input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}" ${f.suggest ? `list="dl-${f.name}"` : ''} ${f.required ? 'required' : ''} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''}>${list}`;
     }
     return `<label class="${f.full ? 'full' : ''}">${esc(f.label)}${input}${f.help ? `<span class="help">${f.help}</span>` : ''}</label>`;
   }).join('');
@@ -355,7 +357,7 @@ views.employees = async (el) => {
     <div class="toolbar"><h1>Employees</h1><span class="spacer"></span>
       <label>Search<input id="q" placeholder="code / name / dept"></label>
       <label>Status<select id="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select></label>
-      <button class="btn" id="shiftBtn" disabled title="Tick employees first">Set shift</button>
+      <button class="btn" id="shiftBtn" disabled title="Tick employees first">Bulk edit</button>
       <button class="btn" id="copyBtn" disabled title="Tick employees first">Transfer to machines</button>
       <button class="btn" id="importBtn">Import CSV</button>
       <button class="btn primary" id="addBtn">Add employee</button></div>
@@ -365,7 +367,7 @@ views.employees = async (el) => {
   const syncSelection = () => {
     $('#copyBtn').disabled = !selected.size;
     $('#shiftBtn').disabled = !selected.size;
-    $('#shiftBtn').textContent = selected.size ? `Set shift (${selected.size})` : 'Set shift';
+    $('#shiftBtn').textContent = selected.size ? `Bulk edit (${selected.size})` : 'Bulk edit';
     $('#copyBtn').textContent = selected.size ? `Transfer to machines (${selected.size})` : 'Transfer to machines';
   };
   const load = async () => {
@@ -421,14 +423,25 @@ views.employees = async (el) => {
   };
   $('#shiftBtn').onclick = async () => {
     const codes = [...selected];
-    const r = await formModal(`Set shift – ${codes.length} employee(s)`, [
-      { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}` },
-      { name: 'shift_id', label: 'Shift', type: 'select', value: '', full: true, options: await shiftOptions() },
-    ], (v) => post('/employees/set-shift', { codes, shift_id: v.shift_id ? Number(v.shift_id) : null }), 'Apply');
+    const [designations, departments] = await Promise.all([get('/designations'), get('/departments')]);
+    const KEEP = '__keep';
+    const r = await formModal(`Bulk edit – ${codes.length} employee(s)`, [
+      { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}<br>Only the fields you fill in are changed.` },
+      { name: 'shift_id', label: 'Shift', type: 'select', value: KEEP, full: true, options: [[KEEP, '(no change)'], ...(await shiftOptions())] },
+      { name: 'designation', label: 'Designation', suggest: designations, placeholder: '(no change)' },
+      { name: 'department', label: 'Department', suggest: departments, placeholder: '(no change)' },
+    ], (v) => {
+      const set = {};
+      if (v.shift_id !== KEEP) set.shift_id = v.shift_id ? Number(v.shift_id) : null;
+      if (v.designation) set.designation = v.designation;
+      if (v.department) set.department = v.department;
+      if (!Object.keys(set).length) throw new Error('Choose a shift or type a designation/department to change');
+      return post('/employees/bulk-update', { codes, set });
+    }, 'Apply');
     if (r) {
       // Clear the ticks so the next selection starts fresh.
       selected.clear();
-      toast(`Shift set for ${r.updated} employee(s)`);
+      toast(`Updated ${r.updated} employee(s)`);
       load();
     }
   };
@@ -587,7 +600,7 @@ views.daily = async (el) => {
     const count = (s) => rows.filter((r) => r.status === s).length;
     $('#sum').innerHTML = `<p>${Object.keys(STATUS).map((s) => `${badge(s)} ${count(s)}`).join(' &nbsp; ')} &nbsp; Late ${rows.filter((r) => r.lateMin > 0).length}</p>`;
     $('#list').innerHTML = table(['Code', 'Name', 'Department', 'Shift', 'Status', 'In', 'Out', 'Hours', 'Late', 'Early', 'OT', 'Punches', 'Remark'], shown.map((r) => `<tr>
-      <td>${esc(r.employee.code)}</td><td>${esc(r.employee.name)}</td><td>${esc(r.employee.department || '')}</td><td>${esc(r.employee.shift_name || '')}</td>
+      <td>${esc(r.employee.code)}</td><td>${esc(r.employee.name)}</td><td>${esc(r.employee.department || '')}</td><td>${esc(r.employee.shift_name || '')}${r.timingNote ? `<br><span class="muted" title="${esc(r.timing)}">${esc(r.timingNote)}: ${esc(r.timing)}</span>` : ''}</td>
       <td>${badge(r.status)}</td><td>${esc(r.inTime || '')}</td><td>${esc(r.outTime || '')}</td><td>${dur(r.workMin)}</td>
       <td class="${r.lateMin ? 'bad' : ''}">${r.lateMin ? `${r.lateMin}m` : ''}</td><td>${r.earlyMin ? `${r.earlyMin}m` : ''}</td><td>${dur(r.otMin)}</td>
       <td>${esc((r.punches || []).join(' '))}</td><td>${esc(r.remark || '')}</td></tr>`));
@@ -669,15 +682,67 @@ const shiftFields = (s = {}) => [
   { type: 'html', html: 'Night shifts are supported: if End is before Start the shift ends the next day. Punches are assigned to the day starting 4 h before shift start.' },
 ];
 
+const fmtDate = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
+/** Form for a date-wise timing change; `t` is an existing row when editing. */
+function timingFields(shifts, t = {}) {
+  const editing = !!t.id;
+  return [
+    editing
+      ? { type: 'html', html: `<b>Shift:</b> ${esc(t.shift_name)}` }
+      : { name: 'shift_ids', label: 'Apply to shifts', type: 'checks', value: shifts.map((s) => String(s.id)), options: shifts.map((s) => [s.id, s.name]),
+          help: 'Each shift gets its own copy; edit one later to give it different half-day times.' },
+    { name: 'from_date', label: 'From', type: 'date', value: t.from_date || today(), required: true },
+    { name: 'to_date', label: 'To (empty = until changed again)', type: 'date', value: t.to_date,
+      help: 'For a single day (exam day, event) use the same date in From and To. A shorter period overrides a longer one.' },
+    { name: 'start_time', label: 'Start', type: 'time', value: t.start_time || '08:10', required: true },
+    { name: 'end_time', label: 'End', type: 'time', value: t.end_time || '14:40', required: true },
+    { type: 'html', html: '<b>Dual shift</b> (optional): an evening session on the same day. The day above becomes the morning session. Both sessions = P, one = HD, none = A.' },
+    { name: 'session2_start', label: 'Evening session starts', type: 'time', value: t.session2_start },
+    { name: 'session2_end', label: 'Evening session ends', type: 'time', value: t.session2_end },
+    { type: 'html', html: '<b>Half-day times</b> for a single-session day. Leave empty to keep the shift\'s own.' },
+    { name: 'first_half_end', label: 'First half ends at', type: 'time', value: t.first_half_end },
+    { name: 'second_half_start', label: 'Second half starts at', type: 'time', value: t.second_half_start },
+    { name: 'half_late_minutes', label: 'Late allowance (min)', type: 'number', value: t.half_late_minutes, placeholder: 'shift\'s' },
+    { name: 'note', label: 'Note', value: t.note, placeholder: 'e.g. Winter timing, Exam day', full: true },
+  ];
+}
+
+const timingText = (t) => `${t.start_time}–${t.end_time}${t.session2_start ? ` + ${t.session2_start}–${t.session2_end}` : ''}`;
+
 views.shifts = async (el) => {
-  const list = await get('/shifts');
+  const [list, timings] = await Promise.all([get('/shifts'), get('/shift-timings')]);
   shiftsCache = list;
   el.innerHTML = `<div class="toolbar"><h1>Shifts</h1><span class="spacer"></span><button class="btn primary" id="addBtn">Add shift</button></div>
     ${table(['Name', 'Timing', 'Grace', 'Half day rule', 'Weekly off', 'OT', 'Employees', ''], list.map((s, i) => `<tr><td>${esc(s.name)}${i === 0 ? ' <span class="muted">(default)</span>' : ''}</td><td>${s.start_time} – ${s.end_time}</td><td>${s.grace_minutes}m</td>
       <td>${s.first_half_end && s.second_half_start
         ? `1st half to ${esc(s.first_half_end)}<br>2nd half from ${esc(s.second_half_start)}`
         : `${dur(s.half_day_minutes)} / ${dur(s.full_day_minutes)} <span class="muted">(hours)</span>`}</td><td>${esc(String(s.weekly_off || '').split(',').filter(Boolean).map((d) => DAYS[d]).join(', ') || 'None')}</td><td>${s.ot_enabled ? 'Yes' : 'No'}</td><td>${s.employees}</td>
-      <td class="actions"><button class="btn sm" data-a="edit" data-id="${s.id}">Edit</button><button class="btn sm danger" data-a="delete" data-id="${s.id}">Delete</button></td></tr>`))}`;
+      <td class="actions"><button class="btn sm" data-a="edit" data-id="${s.id}">Edit</button><button class="btn sm danger" data-a="delete" data-id="${s.id}">Delete</button></td></tr>`))}
+    <div class="toolbar" style="margin-top:20px"><h2 style="margin:0">Timing changes</h2><span class="spacer"></span><button class="btn primary" id="addTiming">Add timing change</button></div>
+    <p class="help">Date-wise timings: winter/summer timing, exam days, dual shift weeks. Reports use the timing in force on each day, including past days.</p>
+    ${table(['Dates', 'Shift', 'Timing', 'Half day', 'Note', ''], timings.map((t) => `<tr>
+      <td>${esc(fmtDate(t.from_date))}${t.to_date === t.from_date ? '' : ` – ${t.to_date ? esc(fmtDate(t.to_date)) : '<span class="muted">until changed</span>'}`}</td>
+      <td>${esc(t.shift_name)}</td>
+      <td>${esc(timingText(t))}${t.session2_start ? ' <span class="badge">dual</span>' : ''}</td>
+      <td>${t.session2_start ? '<span class="muted">by session</span>' : t.first_half_end ? `${esc(t.first_half_end)} / ${esc(t.second_half_start)}` : '<span class="muted">shift\'s</span>'}</td>
+      <td>${esc(t.note || '')}</td>
+      <td class="tactions"><button class="btn sm" data-t="edit" data-id="${t.id}">Edit</button> <button class="btn sm danger" data-t="delete" data-id="${t.id}">Delete</button></td></tr>`))}`;
+  $('#addTiming').onclick = async () => {
+    const r = await formModal('Add timing change', timingFields(list), (v) => {
+      if (!v.shift_ids.length) throw new Error('Choose at least one shift');
+      return post('/shift-timings', { ...v, shift_ids: v.shift_ids.map(Number) });
+    });
+    if (r) { toast(`Timing added for ${r.ids.length} shift(s)`); route(); }
+  };
+  el.querySelectorAll('td.tactions button').forEach((b) => (b.onclick = async () => {
+    const t = timings.find((x) => String(x.id) === b.dataset.id);
+    if (b.dataset.t === 'edit') {
+      if (await formModal(`Edit timing – ${t.shift_name}`, timingFields(list, t), (v) => put(`/shift-timings/${t.id}`, v))) { toast('Saved'); route(); }
+    } else if (confirm(`Delete this timing change (${timingText(t)})? Those days go back to the shift's normal timing.`)) {
+      await act(b, () => del(`/shift-timings/${t.id}`), 'Deleted'); route();
+    }
+  }));
   $('#addBtn').onclick = async () => { if (await formModal('Add shift', shiftFields(), (v) => post('/shifts', v))) { toast('Shift added'); route(); } };
   el.querySelectorAll('td.actions button').forEach((b) => (b.onclick = async () => {
     const s = list.find((x) => String(x.id) === b.dataset.id);

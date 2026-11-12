@@ -155,3 +155,20 @@ test('a shift can be assigned to many selected employees at once', async () => {
     await t.close();
   }
 });
+
+test('bulk edit changes only the given fields of the selected employees', async () => {
+  const t = await startApp();
+  try {
+    await t.login();
+    for (const c of ['1', '2', '3']) await t.call('POST', '/api/employees', { code: c, name: `E${c}`, department: 'Old', designation: 'Clerk' });
+    let r = await t.call('POST', '/api/employees/bulk-update', { codes: ['1', '2'], set: { designation: 'PGT Teacher' } });
+    assert.strictEqual(r.data.updated, 2);
+    const rows = Object.fromEntries(t.db.prepare('SELECT code, designation, department FROM employees').all().map((e) => [e.code, [e.designation, e.department]]));
+    assert.deepStrictEqual(rows, { 1: ['PGT Teacher', 'Old'], 2: ['PGT Teacher', 'Old'], 3: ['Clerk', 'Old'] });
+    assert.deepStrictEqual((await t.call('GET', '/api/designations')).data, ['Clerk', 'PGT Teacher']);
+    assert.strictEqual((await t.call('POST', '/api/employees/bulk-update', { codes: ['1'], set: {} })).status, 400);
+    assert.strictEqual((await t.call('POST', '/api/employees/bulk-update', { codes: [], set: { designation: 'X' } })).status, 400);
+  } finally {
+    await t.close();
+  }
+});

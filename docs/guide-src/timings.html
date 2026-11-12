@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Timing changes and dual shift</title>
+<!-- Extra guide page (inserted as page 11b). Build: node docs/guide-src/build.js -->
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  :root { --ink: #1d2433; --muted: #5b6477; --line: #dfe3ea; --soft: #f4f6f9; --blue: #1f6feb; --blue-soft: #e7f0ff; --amber-soft: #fff4d6; --amber: #9a6700; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 10.5pt/1.42 "Carlito", "Calibri", sans-serif; color: var(--ink); }
+  h2 { font-size: 16pt; margin: 0 0 10pt; padding-bottom: 6pt; border-bottom: 2px solid var(--blue); }
+  h3 { font-size: 12pt; margin: 12pt 0 6pt; }
+  p { margin: 0 0 7pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 10pt; font-size: 9.5pt; }
+  th, td { text-align: left; padding: 4pt 7pt; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--soft); font-size: 8.5pt; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  .shot { width: 100%; border: 1px solid var(--line); border-radius: 6pt; display: block; margin: 4pt 0; }
+  .caption { font-size: 8.5pt; color: var(--muted); margin-bottom: 8pt; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; align-items: start; }
+  .callout { border-left: 4px solid var(--blue); background: var(--blue-soft); padding: 7pt 11pt; border-radius: 0 6pt 6pt 0; margin: 6pt 0 10pt; }
+  .callout.warn { border-color: var(--amber); background: var(--amber-soft); }
+  .callout b:first-child { display: block; margin-bottom: 2pt; }
+  .s { display: inline-block; min-width: 22pt; text-align: center; padding: 0 4pt; border-radius: 8pt; font-weight: 700; font-size: 9pt; border: 1px solid var(--line); }
+  .s-P { background: #dafbe1; } .s-A { background: #ffebe9; } .s-HD { background: #fff8c5; }
+  svg text { font-family: "Carlito", "Calibri", sans-serif; }
+</style>
+</head>
+<body>
+  <h2>4.2 Timing changes and dual shift</h2>
+  <p>When the school timing changes, add a <b>timing change</b> on the Shifts page instead of editing the shift. Each report uses the timing in force on that day, so past days are re-checked automatically, and the shift's normal timing comes back when the change ends.</p>
+
+  <table>
+    <tr><th style="width:26%">Kind of change</th><th>How to enter it (Shifts → Add timing change)</th></tr>
+    <tr><td><b>Period</b> (winter timing)</td><td>From 2 Nov, To 7 Nov, 08:30–14:30. Leave <i>To</i> empty if it lasts until the next change.</td></tr>
+    <tr><td><b>Single day</b> (exam, event)</td><td>Same date in From and To. A single day overrides a period that covers it.</td></tr>
+    <tr><td><b>Dual shift</b></td><td>Morning 08:00–12:00 as Start/End, plus <i>Evening session</i> 16:00–19:00.</td></tr>
+  </table>
+
+  <div class="grid2">
+    <div><img class="shot" src="img/timings-shifts.png"><div class="caption">Timing changes for several shifts at once; "dual" marks two-session days.</div></div>
+    <div><img class="shot" src="img/timings-daily.png"><div class="caption">Daily report on a dual-shift day: each row shows the timing used and why a half day was given.</div></div>
+  </div>
+
+  <h3>How a dual-shift day is marked</h3>
+  <p>Punches before the middle of the break count for the morning session, the rest for the evening. A session counts when it has an in and an out punch, the in within the late allowance and the out within early-exit grace. Hours worked leave out the break; late and early minutes add up over both sessions.</p>
+  <table>
+    <tr><th>Punches (sessions 08:00–12:00 + 16:00–19:00)</th><th style="width:14%">Status</th><th>Remark</th></tr>
+    <tr><td>07:58, 12:02, 15:58, 19:01</td><td><span class="s s-P">P</span></td><td></td></tr>
+    <tr><td>07:59, 12:05</td><td><span class="s s-HD">HD</span></td><td>Evening: absent</td></tr>
+    <tr><td>07:57, 12:01, 16:25, 19:00</td><td><span class="s s-HD">HD</span></td><td>Evening: late 25 min</td></tr>
+    <tr><td>07:58, 12:01, 16:00</td><td><span class="s s-HD">HD</span></td><td>Evening: one punch only (add the missing punch to fix)</td></tr>
+  </table>
+
+  <div class="callout"><b>Several shifts, one change</b>A new timing change is applied to every shift ticked in the form (all by default). Each shift gets its own row, so teaching and non-teaching staff can be given different half-day times by editing their row. Half-day times left empty keep the shift's own, as long as they fit the new timing.</div>
+  <div class="callout warn"><b>Bulk edit</b>On Employees, tick staff and click <b>Bulk edit</b> to change their shift, designation and/or department in one step. Only the fields you fill in change; the ticks clear afterwards.</div>
+</body>
+</html>

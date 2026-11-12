@@ -139,8 +139,16 @@ devices during the handshake; override it with `ADMS_TIMEZONE` (`330` = IST, +05
   leaves at or after the first-half end; the second half counts if they arrive by the second-half start and stay
   until the shift ends (within early-exit grace). Both → **P**, one → **HD**, neither → **A**. The two times can
   differ, e.g. a school 08:10–14:40 where teaching staff's first half ends 11:35 and second half starts 11:05,
-  while non-teaching staff split at 11:25. Use *Employees → tick → Set shift* to assign a shift to many people.
-- Otherwise (no half-day times): work time ≥ *full day* → **P**; ≥ *half day* → **HD**; otherwise **A**. A single punch on a past day is **MP**
+  while non-teaching staff split at 11:25. Use *Employees → tick → Bulk edit* to set the shift, designation or department of many people.
+- Otherwise (no half-day times): work time ≥ *full day* → **P**; ≥ *half day* → **HD**; otherwise **A**.
+- **Timing changes** (Shifts → *Add timing change*): a period (from–to, or open-ended) or a single day with its
+  own start/end and optional half-day times, applied to one or more shifts. Each day uses the most specific change
+  that covers it (a single day beats a period), so past days are re-checked automatically. Empty half-day times
+  keep the shift's own.
+- **Dual shift**: a timing change can add an evening session (e.g. 08:00–12:00 + 16:00–19:00). Punches before the
+  middle of the break count for the morning, the rest for the evening; a session counts with an in and out punch,
+  in within the late allowance and out within early-exit grace. Both → **P**, one → **HD**, none → **A** (remark
+  says which session and why). Hours exclude the break; late/early minutes add up over both sessions. A single punch on a past day is **MP**
   (missed punch, counted as present so it can be regularised with a manual punch); on the current day it is shown
   as present.
 - **Late** if In is after shift start + grace; **early exit** if Out is before shift end − grace.

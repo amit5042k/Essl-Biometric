@@ -111,3 +111,17 @@ test('a successful sign-in clears earlier failures', async () => {
     await t.close();
   }
 });
+
+test('a shift can be saved with empty optional boxes (e.g. no weekly off)', async () => {
+  const t = await startApp();
+  try {
+    await t.login();
+    const r = await t.call('POST', '/api/shifts', { name: 'S', start_time: '08:00', end_time: '14:00', weekly_off: '', grace_minutes: '', early_exit_grace: '' });
+    assert.strictEqual(r.status, 201, JSON.stringify(r.data));
+    const s = t.db.prepare('SELECT weekly_off, grace_minutes FROM shifts WHERE id = ?').get(r.data.id);
+    assert.deepStrictEqual([s.weekly_off, s.grace_minutes], ['', 0]);
+    assert.strictEqual((await t.call('PUT', `/api/shifts/${r.data.id}`, { weekly_off: '' })).status, 200);
+  } finally {
+    await t.close();
+  }
+});

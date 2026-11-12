@@ -32,14 +32,27 @@ function shiftInfo(shift) {
   };
   const h1End = within(shift.first_half_end);
   const h2Start = within(shift.second_half_start);
+  const lateAllowed = shift.half_late_minutes ?? shift.grace_minutes;
+  // Dual shift: a second (evening) session on the same day.
+  let sessions = null;
+  if (shift.session2_start && shift.session2_end) {
+    const s2 = T.hhmmToMinutes(shift.session2_start);
+    const e2 = T.hhmmToMinutes(shift.session2_end);
+    sessions = [{ start, end }, { start: s2, end: e2 }];
+  }
   return {
     ...shift,
     startMin: start,
     endMin: end,
-    halves: h1End != null && h2Start != null
-      ? { firstEnd: h1End, secondStart: h2Start, lateAllowed: shift.half_late_minutes ?? shift.grace_minutes }
+    sessions,
+    lateAllowed,
+    halves: !sessions && h1End != null && h2Start != null
+      ? { firstEnd: h1End, secondStart: h2Start, lateAllowed }
       : null,
-    durationMin: end - start,
+    durationMin: sessions ? sessions.reduce((n, s) => n + s.end - s.start, 0) : end - start,
+    timingText: sessions
+      ? `${shift.start_time}–${shift.end_time} + ${shift.session2_start}–${shift.session2_end}`
+      : `${shift.start_time}–${shift.end_time}`,
     lead: start - DAY_LEAD_MIN,
     weeklyOff: String(shift.weekly_off ?? '')
       .split(',')
@@ -82,6 +95,8 @@ function evaluateDay({ date, shift, punches, isHoliday, holidayName, leave, isTo
     punchCount: times.length,
     punches: times.map((m) => T.fromMinutes(m).slice(11, 16)),
     remark: '',
+    timing: shift.timingText,
+    timingNote: shift.timingNote || '',
   };
 
   if (!times.length) {
@@ -113,7 +128,9 @@ function evaluateDay({ date, shift, punches, isHoliday, holidayName, leave, isTo
     if (last < shiftEnd - shift.early_exit_grace) r.earlyMin = shiftEnd - last;
     if (shift.ot_enabled) r.otMin = Math.max(0, r.workMin - shift.durationMin);
 
-    if (shift.halves) {
+    if (shift.sessions) {
+      Object.assign(r, evaluateSessions(shift, dayStart, times, isToday));
+    } else if (shift.halves) {
       // First half: in on time (within the allowed lateness) and out after the
       // first half ends. Second half: in by the time it starts and out at the
       // end of the shift (within early-exit grace).
@@ -143,6 +160,95 @@ function evaluateDay({ date, shift, punches, isHoliday, holidayName, leave, isTo
   // Punch times carry seconds; report whole minutes.
   for (const k of ['workMin', 'lateMin', 'earlyMin', 'otMin']) r[k] = Math.round(r[k]);
   return r;
+}
+
+/**
+ * Dual shift: punches before the middle of the break belong to the morning
+ * session, the rest to the evening. A session counts when it has an in and an
+ * out punch, the in within the allowed lateness and the out within early-exit
+ * grace of its end. Both sessions = P, one = HD, none = A.
+ */
+function evaluateSessions(shift, dayStart, times, isToday) {
+  const [s1, s2] = shift.sessions;
+  const mid = dayStart + (s1.end + s2.start) / 2;
+  const groups = [times.filter((m) => m < mid), times.filter((m) => m >= mid)];
+  const names = ['Morning', 'Evening'];
+  const notes = [];
+  let attended = 0;
+  let workMin = 0;
+  let lateMin = 0; // added up over both sessions
+  let earlyMin = 0;
+  groups.forEach((g, i) => {
+    const st = dayStart + shift.sessions[i].start;
+    const en = dayStart + shift.sessions[i].end;
+    if (!g.length) { notes.push(`${names[i]}: absent`); return; }
+    if (g[0] > st + shift.grace_minutes) lateMin += g[0] - st;
+    if (g.length === 1) { notes.push(`${names[i]}: one punch only`); return; }
+    const a = g[0];
+    const b = g[g.length - 1];
+    workMin += b - a;
+    if (b < en - shift.early_exit_grace) earlyMin += en - b;
+    const late = a > st + shift.lateAllowed;
+    const early = b < en - shift.early_exit_grace;
+    if (!late && !early) attended += 1;
+    else notes.push(`${names[i]}: ${[late && `late ${Math.round(a - st)} min`, early && `left ${Math.round(en - b)} min early`].filter(Boolean).join(', ')}`);
+  });
+
+  const out = { workMin, lateMin, earlyMin, otMin: 0 };
+  if (shift.ot_enabled) out.otMin = Math.max(0, workMin - shift.durationMin);
+
+  if (attended === 2) out.status = 'P';
+  else if (attended === 1) out.status = 'HD';
+  else out.status = groups.every((g) => g.length <= 1) ? 'MP' : 'A';
+  out.remark = notes.join('; ');
+  if (isToday && attended === 1 && !groups[1].length) {
+    out.status = 'P';
+    out.remark = 'Evening session pending';
+  }
+  return out;
+}
+
+/** Timing changes of each shift: returns (baseShift, date) -> shift info in force that day. */
+function timingResolver(db, from, to) {
+  const rows = db
+    .prepare(`SELECT * FROM shift_timings WHERE from_date <= ? AND (to_date IS NULL OR to_date >= ?) ORDER BY id`)
+    .all(to, from);
+  const byShift = new Map();
+  for (const r of rows) {
+    if (!byShift.has(r.shift_id)) byShift.set(r.shift_id, []);
+    byShift.get(r.shift_id).push(r);
+  }
+  const cache = new Map();
+  return (base, date) => {
+    const list = byShift.get(base.id);
+    if (!list) return base;
+    let best = null;
+    let bestSpan = Infinity;
+    for (const r of list) {
+      if (r.from_date > date || (r.to_date && r.to_date < date)) continue;
+      const span = r.to_date ? T.toMinutes(r.to_date) - T.toMinutes(r.from_date) : Infinity;
+      if (span < bestSpan || (span === bestSpan && (!best || r.id > best.id))) { best = r; bestSpan = span; }
+    }
+    if (!best) return base;
+    if (!cache.has(best.id)) cache.set(best.id, effectiveShift(base, best));
+    return cache.get(best.id);
+  };
+}
+
+/** The shift as changed by one timing row; empty fields keep the shift's own values. */
+function effectiveShift(base, timing) {
+  const keep = (k) => (timing[k] != null && timing[k] !== '' ? timing[k] : base[k]);
+  return shiftInfo({
+    ...base,
+    start_time: timing.start_time,
+    end_time: timing.end_time,
+    session2_start: timing.session2_start || null,
+    session2_end: timing.session2_end || null,
+    first_half_end: keep('first_half_end'),
+    second_half_start: keep('second_half_start'),
+    half_late_minutes: keep('half_late_minutes'),
+    timingNote: timing.note || '',
+  });
 }
 
 /**
@@ -184,6 +290,7 @@ function buildAttendance(db, { from, to, employeeCode, department, includeInacti
 
   const today = T.nowLocal().slice(0, 10);
   const dates = T.dateRange(from, to);
+  const shiftOn = timingResolver(db, from, to);
 
   const rows = employees.map((emp) => {
     const shift = shifts.get(emp.shift_id) || defaultShift;
@@ -201,7 +308,7 @@ function buildAttendance(db, { from, to, employeeCode, department, includeInacti
       }
       return evaluateDay({
         date,
-        shift,
+        shift: shiftOn(shift, date),
         punches: byDate.get(date) || [],
         isHoliday: holidays.has(date),
         holidayName: holidays.get(date),
@@ -237,4 +344,4 @@ function summarize(days) {
   return s;
 }
 
-module.exports = { buildAttendance, evaluateDay, shiftInfo, attendanceDate, summarize, STATUS_LABELS };
+module.exports = { buildAttendance, evaluateDay, shiftInfo, effectiveShift, attendanceDate, summarize, STATUS_LABELS };

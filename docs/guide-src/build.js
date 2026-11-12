@@ -1,7 +1,7 @@
 'use strict';
 
-// Renders the extra guide page and inserts it after page 11 of
-// docs/eSSL-Attendance-Guide.pdf (once; re-running replaces it).
+// Renders the extra guide pages and inserts them into
+// docs/eSSL-Attendance-Guide.pdf (re-running replaces them).
 // Needs Playwright (Chromium) and Python's pypdf.
 //   node docs/guide-src/build.js
 const path = require('node:path');
@@ -10,34 +10,45 @@ const { execFileSync } = require('node:child_process');
 const PLAYWRIGHT = process.env.PLAYWRIGHT || 'playwright';
 const here = __dirname;
 const guide = path.join(here, '..', 'eSSL-Attendance-Guide.pdf');
-const page = path.join(here, 'half-day.pdf');
+// Extra pages, inserted after printed page `after` and labelled `label`.
+const PAGES = [
+  { html: 'half-day.html', after: 11, label: '11a' },
+  { html: 'timings.html', after: 11, label: '11b' },
+];
 
 (async () => {
   const { chromium } = require(PLAYWRIGHT);
   const browser = await chromium.launch();
-  const p = await browser.newPage();
-  await p.goto(`file://${path.join(here, 'half-day.html')}`, { waitUntil: 'networkidle' });
-  await p.pdf({
-    path: page, format: 'A4', printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true,
-    headerTemplate: '<div></div>',
-    footerTemplate: '<div style="width:100%;font-family:Carlito,sans-serif;font-size:8.5px;color:#8a93a6;padding:0 15mm;display:flex;justify-content:space-between"><span>eSSL Attendance Management System – Guide</span><span>Page 11a</span></div>',
-  });
+  const built = [];
+  for (const pg of PAGES) {
+    const p = await browser.newPage();
+    await p.goto(`file://${path.join(here, pg.html)}`, { waitUntil: 'networkidle' });
+    const out = path.join(here, `${pg.label}.pdf`);
+    await p.pdf({
+      path: out, format: 'A4', printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true,
+      headerTemplate: '<div></div>',
+      footerTemplate: `<div style="width:100%;font-family:Carlito,sans-serif;font-size:8.5px;color:#8a93a6;padding:0 15mm;display:flex;justify-content:space-between"><span>eSSL Attendance Management System – Guide</span><span>Page ${pg.label}</span></div>`,
+    });
+    built.push({ ...pg, pdf: out });
+  }
   await browser.close();
   execFileSync('python3', ['-I', '-c', `
-import sys
+import json, sys
 from pypdf import PdfReader, PdfWriter
-guide, extra = sys.argv[1], sys.argv[2]
-src = PdfReader(guide)
-add = PdfReader(extra)
-assert len(add.pages) == 1, f"extra page must fit on one page, got {len(add.pages)}"
-pages = [p for p in src.pages if 'Page 11a' not in (p.extract_text() or '')]
+guide, pages = sys.argv[1], json.loads(sys.argv[2])
+labels = [f"Page {p['label']}" for p in pages]
+src = [p for p in PdfReader(guide).pages if not any(l in (p.extract_text() or '') for l in labels)]
 w = PdfWriter()
-for i, p in enumerate(pages):
-    w.add_page(p)
-    if i == 10:
-        w.add_page(add.pages[0])
+for i, page in enumerate(src):
+    w.add_page(page)
+    for p in pages:
+        if p['after'] == i + 1:
+            extra = PdfReader(p['pdf'])
+            assert len(extra.pages) == 1, f"{p['html']} must fit on one page, got {len(extra.pages)}"
+            w.add_page(extra.pages[0])
 with open(guide, 'wb') as f:
     w.write(f)
 print(len(w.pages), 'pages')
-`, guide, page], { stdio: 'inherit' });
+`, guide, JSON.stringify(built)], { stdio: 'inherit' });
+  for (const pg of built) require('node:fs').unlinkSync(pg.pdf);
 })().catch((e) => { console.error(e); process.exit(1); });

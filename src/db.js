@@ -109,6 +109,27 @@ CREATE TABLE IF NOT EXISTS punches (
 CREATE INDEX IF NOT EXISTS idx_punches_time ON punches(punch_time);
 CREATE INDEX IF NOT EXISTS idx_punches_emp_time ON punches(employee_code, punch_time);
 
+-- Date-wise timing changes of a shift (a range, or a single day with
+-- from_date = to_date; to_date NULL = until changed again). The most specific
+-- row covering a date wins. Empty half-day fields inherit from the shift.
+-- session2_* adds an evening session to the same day (dual shift).
+CREATE TABLE IF NOT EXISTS shift_timings (
+  id INTEGER PRIMARY KEY,
+  shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+  from_date TEXT NOT NULL,
+  to_date TEXT,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  session2_start TEXT,
+  session2_end TEXT,
+  first_half_end TEXT,
+  second_half_start TEXT,
+  half_late_minutes INTEGER,
+  note TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_shift_timings ON shift_timings(shift_id, from_date);
+
 CREATE TABLE IF NOT EXISTS holidays (
   id INTEGER PRIMARY KEY,
   date TEXT UNIQUE NOT NULL,

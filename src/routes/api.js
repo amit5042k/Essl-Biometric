@@ -3,7 +3,7 @@
 const express = require('express');
 const T = require('../util/time');
 const { sendCsv } = require('../util/csv');
-const { buildAttendance, summarize, STATUS_LABELS, shiftInfo } = require('../services/attendance');
+const { buildAttendance, summarize, STATUS_LABELS, shiftInfo, effectiveShift } = require('../services/attendance');
 const { savePunches } = require('../services/punches');
 
 class HttpError extends Error {
@@ -271,14 +271,36 @@ function createApiRouter({ db, auth, devices, biometrics }) {
 
   /** Bulk import: [{code,name,department,designation,card_no,...}] */
   /** Assign one shift to many employees: { codes: [...], shift_id: id | null } */
-  r.post('/employees/set-shift', (req, res) => {
-    const codes = Array.isArray(req.body.codes) ? req.body.codes.map(String).filter(Boolean) : [];
+  /**
+   * Bulk edit of selected employees: { codes: [...], set: { shift_id?, designation?, department? } }.
+   * Only the fields present in "set" change; shift_id null = default shift.
+   */
+  function bulkUpdate(codesIn, set) {
+    const codes = Array.isArray(codesIn) ? codesIn.map(String).filter(Boolean) : [];
     if (!codes.length) throw bad('Select at least one employee');
-    const shiftId = req.body.shift_id == null || req.body.shift_id === '' ? null : Number(req.body.shift_id);
-    if (shiftId != null && !db.prepare('SELECT 1 FROM shifts WHERE id = ?').get(shiftId)) throw bad('Unknown shift');
-    const upd = db.prepare('UPDATE employees SET shift_id = ? WHERE code = ?');
-    const updated = db.transaction(() => codes.reduce((n, c) => n + upd.run(shiftId, c).changes, 0))();
-    res.json({ updated });
+    const data = {};
+    if ('shift_id' in set) {
+      const id = set.shift_id == null || set.shift_id === '' ? null : Number(set.shift_id);
+      if (id != null && !db.prepare('SELECT 1 FROM shifts WHERE id = ?').get(id)) throw bad('Unknown shift');
+      data.shift_id = id;
+    }
+    for (const k of ['designation', 'department']) {
+      if (!(k in set)) continue;
+      const v = set[k] == null ? null : String(set[k]).trim();
+      if (v && v.length > 80) throw bad(`${k} is too long`);
+      data[k] = v || null;
+    }
+    const keys = Object.keys(data);
+    if (!keys.length) throw bad('Nothing to change');
+    const upd = db.prepare(`UPDATE employees SET ${keys.map((k) => `${k} = @${k}`).join(', ')} WHERE code = @code`);
+    return db.transaction(() => codes.reduce((n, code) => n + upd.run({ ...data, code }).changes, 0))();
+  }
+
+  r.post('/employees/bulk-update', (req, res) => res.json({ updated: bulkUpdate(req.body.codes, req.body.set || {}) }));
+  r.post('/employees/set-shift', (req, res) => res.json({ updated: bulkUpdate(req.body.codes, { shift_id: req.body.shift_id }) }));
+
+  r.get('/designations', (req, res) => {
+    res.json(db.prepare(`SELECT DISTINCT designation FROM employees WHERE designation IS NOT NULL AND designation <> '' ORDER BY 1`).all().map((x) => x.designation));
   });
 
   r.post('/employees/bulk', (req, res) => {
@@ -360,15 +382,25 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   }
 
   r.get('/shifts', (req, res) => res.json(db.prepare('SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id = s.id) AS employees FROM shifts s ORDER BY id').all()));
+  // Empty boxes in the form arrive as null; these columns need a value.
+  function shiftData(body) {
+    const data = pick(body, SHIFT_FIELDS);
+    if ('weekly_off' in data && data.weekly_off == null) data.weekly_off = ''; // no weekly off
+    for (const k of ['grace_minutes', 'early_exit_grace', 'half_day_minutes', 'full_day_minutes', 'ot_enabled']) {
+      if (k in data && data[k] == null) data[k] = 0;
+    }
+    return data;
+  }
+
   r.post('/shifts', (req, res) => {
-    const data = pick(req.body, SHIFT_FIELDS);
+    const data = shiftData(req.body);
     validateShift(data);
     res.status(201).json({ id: insert(db, 'shifts', data) });
   });
   r.put('/shifts/:id', (req, res) => {
     const cur = db.prepare('SELECT * FROM shifts WHERE id = ?').get(req.params.id);
     if (!cur) throw new HttpError(404, 'Shift not found');
-    const data = pick(req.body, SHIFT_FIELDS);
+    const data = shiftData(req.body);
     validateShift({ ...cur, ...data });
     update(db, 'shifts', cur.id, data);
     res.json({ ok: true });
@@ -376,6 +408,80 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   r.delete('/shifts/:id', (req, res) => {
     if (db.prepare('SELECT COUNT(*) n FROM shifts').get().n <= 1) throw bad('At least one shift is required');
     db.prepare('DELETE FROM shifts WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  });
+
+  // --------------------------------------------------------- shift timings
+  // Date-wise timing changes, e.g. winter timing from 8 Nov, exam day on 20 Nov,
+  // morning + evening sessions 12–15 Nov.
+  const TIMING_FIELDS = ['from_date', 'to_date', 'start_time', 'end_time', 'session2_start', 'session2_end',
+    'first_half_end', 'second_half_start', 'half_late_minutes', 'note'];
+
+  function validateTiming(t, shift) {
+    requireDate(t.from_date, 'from_date');
+    if (t.to_date != null && t.to_date !== '') {
+      requireDate(t.to_date, 'to_date');
+      if (t.to_date < t.from_date) throw bad('"To" date is before "From" date');
+    }
+    if (!HHMM.test(t.start_time || '') || !HHMM.test(t.end_time || '')) throw bad('Start and end must be HH:MM (24h)');
+    if (!t.session2_start !== !t.session2_end) throw bad('Give both the evening session start and end, or neither');
+    if (t.session2_start) {
+      if (!HHMM.test(t.session2_start) || !HHMM.test(t.session2_end)) throw bad('Evening session times must be HH:MM (24h)');
+      if (!(t.start_time < t.end_time && t.end_time < t.session2_start && t.session2_start < t.session2_end)) {
+        throw bad('With an evening session the times must run in order: morning start < morning end < evening start < evening end');
+      }
+    }
+    if (t.half_late_minutes != null && !(Number.isInteger(Number(t.half_late_minutes)) && Number(t.half_late_minutes) >= 0)) {
+      throw bad('Late allowance must be a whole number of minutes');
+    }
+    if (t.note && String(t.note).length > 80) throw bad('Note is too long (max 80 characters)');
+    if (!t.first_half_end !== !t.second_half_start && (t.first_half_end || t.second_half_start)) {
+      throw bad('Set both half-day times, or leave both empty to use the shift\'s');
+    }
+    // Half-day times (own or inherited) must fit inside a single-session day.
+    const eff = effectiveShift(shift, t);
+    if (!eff.sessions && eff.halves) {
+      for (const v of [eff.halves.firstEnd, eff.halves.secondStart]) {
+        if (v <= eff.startMin || v >= eff.endMin) {
+          throw bad(`Half-day times ${eff.first_half_end} / ${eff.second_half_start} fall outside ${t.start_time}–${t.end_time}; set the half-day times for this timing`);
+        }
+      }
+    }
+  }
+
+  r.get('/shift-timings', (req, res) => {
+    res.json(db.prepare(
+      `SELECT t.*, s.name AS shift_name FROM shift_timings t JOIN shifts s ON s.id = t.shift_id
+       ORDER BY t.from_date DESC, s.name`
+    ).all());
+  });
+
+  /** { shift_ids: [...], from_date, to_date?, start_time, end_time, ... } -> one row per shift */
+  r.post('/shift-timings', (req, res) => {
+    const ids = Array.isArray(req.body.shift_ids) ? req.body.shift_ids.map(Number) : [];
+    if (!ids.length) throw bad('Choose at least one shift');
+    const data = pick(req.body, TIMING_FIELDS);
+    const created = db.transaction(() => ids.map((id) => {
+      const shift = db.prepare('SELECT * FROM shifts WHERE id = ?').get(id);
+      if (!shift) throw bad('Unknown shift');
+      validateTiming(data, shift);
+      return insert(db, 'shift_timings', { ...data, shift_id: id });
+    }))();
+    res.status(201).json({ ids: created });
+  });
+
+  r.put('/shift-timings/:id', (req, res) => {
+    const cur = db.prepare('SELECT * FROM shift_timings WHERE id = ?').get(req.params.id);
+    if (!cur) throw new HttpError(404, 'Timing not found');
+    const data = pick(req.body, TIMING_FIELDS);
+    const shift = db.prepare('SELECT * FROM shifts WHERE id = ?').get(cur.shift_id);
+    validateTiming({ ...cur, ...data }, shift);
+    update(db, 'shift_timings', cur.id, data);
+    res.json({ ok: true });
+  });
+
+  r.delete('/shift-timings/:id', (req, res) => {
+    db.prepare('DELETE FROM shift_timings WHERE id = ?').run(req.params.id);
     res.json({ ok: true });
   });
 
@@ -484,8 +590,9 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   r.get('/reports/daily.csv', (req, res) => {
     const { date, rows } = dailyRows(req.query);
     sendCsv(res, `daily_${date}.csv`,
-      ['Code', 'Name', 'Department', 'Shift', 'Status', 'In', 'Out', 'Work Hrs', 'Late (min)', 'Early Exit (min)', 'OT Hrs', 'Punches', 'Remark'],
-      rows.map((x) => [x.employee.code, x.employee.name, x.employee.department, x.employee.shift_name, STATUS_LABELS[x.status] || x.status,
+      ['Code', 'Name', 'Department', 'Shift', 'Timing', 'Status', 'In', 'Out', 'Work Hrs', 'Late (min)', 'Early Exit (min)', 'OT Hrs', 'Punches', 'Remark'],
+      rows.map((x) => [x.employee.code, x.employee.name, x.employee.department, x.employee.shift_name,
+        `${x.timing || ''}${x.timingNote ? ` (${x.timingNote})` : ''}`, STATUS_LABELS[x.status] || x.status,
         x.inTime, x.outTime, T.formatDuration(x.workMin), x.lateMin || '', x.earlyMin || '', x.otMin ? T.formatDuration(x.otMin) : '',
         (x.punches || []).join(' '), x.remark]));
   });
