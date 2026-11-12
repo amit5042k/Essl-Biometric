@@ -33,7 +33,12 @@ CREATE TABLE IF NOT EXISTS shifts (
   half_day_minutes INTEGER NOT NULL DEFAULT 240,
   full_day_minutes INTEGER NOT NULL DEFAULT 480,
   weekly_off TEXT NOT NULL DEFAULT '0',
-  ot_enabled INTEGER NOT NULL DEFAULT 0
+  ot_enabled INTEGER NOT NULL DEFAULT 0,
+  -- Optional half-day boundaries (HH:MM). When both are set, half days are
+  -- decided by these times instead of by minutes worked.
+  first_half_end TEXT,
+  second_half_start TEXT,
+  half_late_minutes INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS departments (
@@ -161,14 +166,19 @@ CREATE TABLE IF NOT EXISTS device_logs (
 
 // Columns added after the first release; CREATE TABLE IF NOT EXISTS does not add them.
 function migrate(db) {
-  const cols = new Set(db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name));
-  const added = [
-    ['fp_version', 'TEXT'], ['face_version', 'TEXT'],
-    ['clock_drift', 'INTEGER'], ['clock_checked_at', 'TEXT'], ['clock_source', 'TEXT'],
-    ['auto_restart_at', 'TEXT'], ['last_auto_restart', 'TEXT'],
-  ];
-  for (const [name, type] of added) {
-    if (!cols.has(name)) db.exec(`ALTER TABLE devices ADD COLUMN ${name} ${type}`);
+  const added = {
+    devices: [
+      ['fp_version', 'TEXT'], ['face_version', 'TEXT'],
+      ['clock_drift', 'INTEGER'], ['clock_checked_at', 'TEXT'], ['clock_source', 'TEXT'],
+      ['auto_restart_at', 'TEXT'], ['last_auto_restart', 'TEXT'],
+    ],
+    shifts: [['first_half_end', 'TEXT'], ['second_half_start', 'TEXT'], ['half_late_minutes', 'INTEGER']],
+  };
+  for (const [table, columns] of Object.entries(added)) {
+    const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    for (const [name, type] of columns) {
+      if (!cols.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
   }
 }
 

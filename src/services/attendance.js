@@ -23,10 +23,22 @@ function shiftInfo(shift) {
   const start = T.hhmmToMinutes(shift.start_time);
   let end = T.hhmmToMinutes(shift.end_time);
   if (end <= start) end += 1440; // overnight shift
+  // Half-day boundaries, as minutes after midnight of the shift's start day.
+  const within = (hhmm) => {
+    if (!hhmm) return null;
+    let m = T.hhmmToMinutes(hhmm);
+    if (m < start) m += 1440;
+    return m;
+  };
+  const h1End = within(shift.first_half_end);
+  const h2Start = within(shift.second_half_start);
   return {
     ...shift,
     startMin: start,
     endMin: end,
+    halves: h1End != null && h2Start != null
+      ? { firstEnd: h1End, secondStart: h2Start, lateAllowed: shift.half_late_minutes ?? shift.grace_minutes }
+      : null,
     durationMin: end - start,
     lead: start - DAY_LEAD_MIN,
     weeklyOff: String(shift.weekly_off ?? '')
@@ -101,7 +113,22 @@ function evaluateDay({ date, shift, punches, isHoliday, holidayName, leave, isTo
     if (last < shiftEnd - shift.early_exit_grace) r.earlyMin = shiftEnd - last;
     if (shift.ot_enabled) r.otMin = Math.max(0, r.workMin - shift.durationMin);
 
-    if (r.workMin >= shift.full_day_minutes) r.status = 'P';
+    if (shift.halves) {
+      // First half: in on time (within the allowed lateness) and out after the
+      // first half ends. Second half: in by the time it starts and out at the
+      // end of the shift (within early-exit grace).
+      const h = shift.halves;
+      const firstHalf = first <= shiftStart + h.lateAllowed && last >= dayStart + h.firstEnd;
+      const secondHalf = first <= dayStart + h.secondStart && last >= shiftEnd - shift.early_exit_grace;
+      if (firstHalf && secondHalf) r.status = 'P';
+      else if (firstHalf || secondHalf) {
+        r.status = 'HD';
+        r.remark = firstHalf ? 'First half only' : 'Second half only';
+      } else {
+        r.status = 'A';
+        r.remark = 'Neither half completed';
+      }
+    } else if (r.workMin >= shift.full_day_minutes) r.status = 'P';
     else if (r.workMin >= shift.half_day_minutes) r.status = 'HD';
     else {
       r.status = 'A';

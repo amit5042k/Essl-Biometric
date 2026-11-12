@@ -355,6 +355,7 @@ views.employees = async (el) => {
     <div class="toolbar"><h1>Employees</h1><span class="spacer"></span>
       <label>Search<input id="q" placeholder="code / name / dept"></label>
       <label>Status<select id="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select></label>
+      <button class="btn" id="shiftBtn" disabled title="Tick employees first">Set shift</button>
       <button class="btn" id="copyBtn" disabled title="Tick employees first">Transfer to machines</button>
       <button class="btn" id="importBtn">Import CSV</button>
       <button class="btn primary" id="addBtn">Add employee</button></div>
@@ -363,6 +364,8 @@ views.employees = async (el) => {
   const selected = new Set();
   const syncSelection = () => {
     $('#copyBtn').disabled = !selected.size;
+    $('#shiftBtn').disabled = !selected.size;
+    $('#shiftBtn').textContent = selected.size ? `Set shift (${selected.size})` : 'Set shift';
     $('#copyBtn').textContent = selected.size ? `Transfer to machines (${selected.size})` : 'Transfer to machines';
   };
   const load = async () => {
@@ -415,6 +418,19 @@ views.employees = async (el) => {
   };
   $('#copyBtn').onclick = async () => {
     if (await copyBiometrics([...selected])) load();
+  };
+  $('#shiftBtn').onclick = async () => {
+    const codes = [...selected];
+    const r = await formModal(`Set shift – ${codes.length} employee(s)`, [
+      { type: 'html', html: `<b>Selected:</b> ${esc(codes.join(', '))}` },
+      { name: 'shift_id', label: 'Shift', type: 'select', value: '', full: true, options: await shiftOptions() },
+    ], (v) => post('/employees/set-shift', { codes, shift_id: v.shift_id ? Number(v.shift_id) : null }), 'Apply');
+    if (r) {
+      // Clear the ticks so the next selection starts fresh.
+      selected.clear();
+      toast(`Shift set for ${r.updated} employee(s)`);
+      load();
+    }
   };
   $('#q').oninput = () => { clearTimeout(load.t); load.t = setTimeout(load, 250); };
   $('#active').onchange = load;
@@ -641,6 +657,11 @@ const shiftFields = (s = {}) => [
   { name: 'end_time', label: 'End', type: 'time', value: s.end_time || '18:30', required: true },
   { name: 'grace_minutes', label: 'Late grace (min)', type: 'number', value: s.grace_minutes ?? 15 },
   { name: 'early_exit_grace', label: 'Early exit grace (min)', type: 'number', value: s.early_exit_grace ?? 15 },
+  { type: 'html', html: '<b>Half day by time</b> (optional). Set both times to decide half days by the clock: the <i>first half</i> counts if the person arrives on time and stays until it ends; the <i>second half</i> counts if they arrive by the time it starts and stay until the shift ends. Both halves = P, one = HD, none = A. The two times may differ (e.g. teaching staff: first half ends 11:35, second half starts 11:05).' },
+  { name: 'first_half_end', label: 'First half ends at', type: 'time', value: s.first_half_end },
+  { name: 'second_half_start', label: 'Second half starts at', type: 'time', value: s.second_half_start },
+  { name: 'half_late_minutes', label: 'First half still counts if late by up to (min)', type: 'number', value: s.half_late_minutes, placeholder: 'same as late grace' },
+  { type: 'html', html: '<b>Half day by hours</b>, used only when the times above are empty:' },
   { name: 'half_day_minutes', label: 'Min. minutes for half day', type: 'number', value: s.half_day_minutes ?? 240 },
   { name: 'full_day_minutes', label: 'Min. minutes for full day', type: 'number', value: s.full_day_minutes ?? 480 },
   { name: 'weekly_off', label: 'Weekly off (0=Sun … 6=Sat, comma separated)', value: s.weekly_off ?? '0' },
@@ -652,8 +673,10 @@ views.shifts = async (el) => {
   const list = await get('/shifts');
   shiftsCache = list;
   el.innerHTML = `<div class="toolbar"><h1>Shifts</h1><span class="spacer"></span><button class="btn primary" id="addBtn">Add shift</button></div>
-    ${table(['Name', 'Timing', 'Grace', 'Half / Full day', 'Weekly off', 'OT', 'Employees', ''], list.map((s, i) => `<tr><td>${esc(s.name)}${i === 0 ? ' <span class="muted">(default)</span>' : ''}</td><td>${s.start_time} – ${s.end_time}</td><td>${s.grace_minutes}m</td>
-      <td>${dur(s.half_day_minutes)} / ${dur(s.full_day_minutes)}</td><td>${esc(String(s.weekly_off || '').split(',').filter(Boolean).map((d) => DAYS[d]).join(', ') || 'None')}</td><td>${s.ot_enabled ? 'Yes' : 'No'}</td><td>${s.employees}</td>
+    ${table(['Name', 'Timing', 'Grace', 'Half day rule', 'Weekly off', 'OT', 'Employees', ''], list.map((s, i) => `<tr><td>${esc(s.name)}${i === 0 ? ' <span class="muted">(default)</span>' : ''}</td><td>${s.start_time} – ${s.end_time}</td><td>${s.grace_minutes}m</td>
+      <td>${s.first_half_end && s.second_half_start
+        ? `1st half to ${esc(s.first_half_end)}<br>2nd half from ${esc(s.second_half_start)}`
+        : `${dur(s.half_day_minutes)} / ${dur(s.full_day_minutes)} <span class="muted">(hours)</span>`}</td><td>${esc(String(s.weekly_off || '').split(',').filter(Boolean).map((d) => DAYS[d]).join(', ') || 'None')}</td><td>${s.ot_enabled ? 'Yes' : 'No'}</td><td>${s.employees}</td>
       <td class="actions"><button class="btn sm" data-a="edit" data-id="${s.id}">Edit</button><button class="btn sm danger" data-a="delete" data-id="${s.id}">Delete</button></td></tr>`))}`;
   $('#addBtn').onclick = async () => { if (await formModal('Add shift', shiftFields(), (v) => post('/shifts', v))) { toast('Shift added'); route(); } };
   el.querySelectorAll('td.actions button').forEach((b) => (b.onclick = async () => {

@@ -134,7 +134,13 @@ devices during the handshake; override it with `ADMS_TIMEZONE` (`330` = IST, +05
   05:30 the next day, so a late checkout after midnight counts for the previous day; a 22:00–06:00 night shift is
   credited to the day it started.
 - First punch = **In**, last punch = **Out**. Repeat punches within 1 minute are ignored.
-- Work time ≥ *full day* → **P**; ≥ *half day* → **HD**; otherwise **A**. A single punch on a past day is **MP**
+- **Half day by time** (optional, per shift): set *First half ends at* and *Second half starts at*. The first half
+  counts if the person arrives on time (within the late grace, or *First half still counts if late by up to*) and
+  leaves at or after the first-half end; the second half counts if they arrive by the second-half start and stay
+  until the shift ends (within early-exit grace). Both → **P**, one → **HD**, neither → **A**. The two times can
+  differ, e.g. a school 08:10–14:40 where teaching staff's first half ends 11:35 and second half starts 11:05,
+  while non-teaching staff split at 11:25. Use *Employees → tick → Set shift* to assign a shift to many people.
+- Otherwise (no half-day times): work time ≥ *full day* → **P**; ≥ *half day* → **HD**; otherwise **A**. A single punch on a past day is **MP**
   (missed punch, counted as present so it can be regularised with a manual punch); on the current day it is shown
   as present.
 - **Late** if In is after shift start + grace; **early exit** if Out is before shift end − grace.
@@ -179,6 +185,7 @@ src/
   services/punches.js    punch storage, user import
   routes/api.js          REST API used by the web UI
 public/                  web UI (plain HTML/JS, no build step)
+docs/                    PDF guide; docs/guide-src/ has the source of pages added later
 tools/                   ZK and ADMS device simulators
 test/                    node:test suites
 ```

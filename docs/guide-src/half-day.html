@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Half day by time</title>
+<!-- Extra guide page (inserted as page 11a). Build: node docs/guide-src/build.js -->
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  :root { --ink: #1d2433; --muted: #5b6477; --line: #dfe3ea; --soft: #f4f6f9; --blue: #1f6feb; --blue-soft: #e7f0ff; --amber-soft: #fff4d6; --amber: #9a6700; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 10.5pt/1.42 "Carlito", "Calibri", sans-serif; color: var(--ink); }
+  h2 { font-size: 16pt; margin: 0 0 10pt; padding-bottom: 6pt; border-bottom: 2px solid var(--blue); }
+  h3 { font-size: 12pt; margin: 12pt 0 6pt; }
+  p { margin: 0 0 7pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 10pt; font-size: 9.5pt; }
+  th, td { text-align: left; padding: 4pt 7pt; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--soft); font-size: 8.5pt; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  .shot { width: 100%; border: 1px solid var(--line); border-radius: 6pt; display: block; margin: 4pt 0; }
+  .caption { font-size: 8.5pt; color: var(--muted); margin-bottom: 8pt; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; align-items: start; }
+  .callout { border-left: 4px solid var(--blue); background: var(--blue-soft); padding: 7pt 11pt; border-radius: 0 6pt 6pt 0; margin: 6pt 0 10pt; }
+  .callout.warn { border-color: var(--amber); background: var(--amber-soft); }
+  .callout b:first-child { display: block; margin-bottom: 2pt; }
+  .s { display: inline-block; min-width: 22pt; text-align: center; padding: 0 4pt; border-radius: 8pt; font-weight: 700; font-size: 9pt; border: 1px solid var(--line); }
+  .s-P { background: #dafbe1; } .s-A { background: #ffebe9; } .s-HD { background: #fff8c5; }
+  svg text { font-family: "Carlito", "Calibri", sans-serif; }
+</style>
+</head>
+<body>
+  <h2>4.1 Half day by time (teaching and non-teaching staff)</h2>
+  <p>A shift can decide half days by the clock instead of by hours worked. Set <b>First half ends at</b> and <b>Second half starts at</b> on the shift (Shifts → Edit). The two times may differ, so one school day can have different half-day rules for different staff.</p>
+
+  <svg viewBox="0 0 700 120" width="100%">
+    <g font-size="10" fill="#5b6477" text-anchor="middle">
+      <text x="60" y="14">08:10</text><text x="353" y="14">11:25</text><text x="640" y="14">14:40</text>
+    </g>
+    <line x1="60" y1="20" x2="640" y2="20" stroke="#94a3b8"/>
+    <text x="0" y="52" font-size="11" font-weight="700">Non-teaching</text>
+    <rect x="60" y="38" width="293" height="20" rx="4" fill="#1f6feb" opacity=".8"/><text x="206" y="52" font-size="10" fill="#fff" text-anchor="middle">first half (to 11:25)</text>
+    <rect x="353" y="38" width="287" height="20" rx="4" fill="#1a7f37" opacity=".8"/><text x="496" y="52" font-size="10" fill="#fff" text-anchor="middle">second half (from 11:25)</text>
+    <text x="0" y="99" font-size="11" font-weight="700">Teaching</text>
+    <rect x="60" y="72" width="302" height="20" rx="4" fill="#1f6feb" opacity=".8"/><text x="200" y="86" font-size="10" fill="#fff" text-anchor="middle">first half (to 11:35)</text>
+    <rect x="325" y="98" width="315" height="20" rx="4" fill="#1a7f37" opacity=".8"/><text x="482" y="112" font-size="10" fill="#fff" text-anchor="middle">second half (from 11:05)</text>
+    <g font-size="9" fill="#5b6477" text-anchor="middle"><text x="325" y="68">11:05</text><text x="362" y="68">11:35</text></g>
+  </svg>
+
+  <table>
+    <tr><th style="width:23%">Half</th><th>Counts when the person…</th></tr>
+    <tr><td><b>First half</b></td><td>arrives on time (within the late allowance) <b>and</b> leaves at or after <i>First half ends at</i></td></tr>
+    <tr><td><b>Second half</b></td><td>arrives at or before <i>Second half starts at</i> <b>and</b> stays until the shift ends (within early-exit grace)</td></tr>
+    <tr><td><b>Result</b></td><td>both halves <span class="s s-P">P</span> · one half <span class="s s-HD">HD</span> (remark "First half only" / "Second half only") · neither <span class="s s-A">A</span></td></tr>
+  </table>
+
+  <div class="grid2">
+    <div>
+      <img class="shot" src="img/half-shift-form.png">
+      <div class="caption">Teaching shift: 08:10–14:40, first half ends 11:35, second half starts 11:05.</div>
+    </div>
+    <div>
+      <img class="shot" src="img/half-daily.png">
+      <div class="caption">Same punches, different result: leaving at 11:30 is a half day for office staff but absent for a teacher; arriving at 11:10 likewise.</div>
+    </div>
+  </div>
+
+  <h3>Setting it up</h3>
+  <p>1. <b>Shifts → Add shift</b> twice: "Non-teaching" (11:25 / 11:25) and "Teaching" (11:35 / 11:05), both 08:10–14:40. &nbsp;2. <b>Employees</b>: tick all teachers, click <b>Set shift</b>, choose "Teaching"; then tick the office staff and choose "Non-teaching". The ticks clear after each apply.</p>
+
+  <div class="callout warn"><b>Late arrivals</b>By default the first half is lost when someone is later than the shift's <i>late grace</i> (e.g. 10 min): arriving 08:30 and staying all day is <b>HD, second half only</b>. If late arrivals should still get a full day, set <b>First half still counts if late by up to (min)</b>, e.g. 60; they are still marked late. A shift without half-day times keeps the hours-based rule.</div>
+</body>
+</html>

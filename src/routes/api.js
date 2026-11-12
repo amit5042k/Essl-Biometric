@@ -3,7 +3,7 @@
 const express = require('express');
 const T = require('../util/time');
 const { sendCsv } = require('../util/csv');
-const { buildAttendance, summarize, STATUS_LABELS } = require('../services/attendance');
+const { buildAttendance, summarize, STATUS_LABELS, shiftInfo } = require('../services/attendance');
 const { savePunches } = require('../services/punches');
 
 class HttpError extends Error {
@@ -270,6 +270,17 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   });
 
   /** Bulk import: [{code,name,department,designation,card_no,...}] */
+  /** Assign one shift to many employees: { codes: [...], shift_id: id | null } */
+  r.post('/employees/set-shift', (req, res) => {
+    const codes = Array.isArray(req.body.codes) ? req.body.codes.map(String).filter(Boolean) : [];
+    if (!codes.length) throw bad('Select at least one employee');
+    const shiftId = req.body.shift_id == null || req.body.shift_id === '' ? null : Number(req.body.shift_id);
+    if (shiftId != null && !db.prepare('SELECT 1 FROM shifts WHERE id = ?').get(shiftId)) throw bad('Unknown shift');
+    const upd = db.prepare('UPDATE employees SET shift_id = ? WHERE code = ?');
+    const updated = db.transaction(() => codes.reduce((n, c) => n + upd.run(shiftId, c).changes, 0))();
+    res.json({ updated });
+  });
+
   r.post('/employees/bulk', (req, res) => {
     const rows = Array.isArray(req.body) ? req.body : [];
     const upsert = db.prepare(
@@ -326,12 +337,26 @@ function createApiRouter({ db, auth, devices, biometrics }) {
   });
 
   // ---------------------------------------------------------------- shifts
-  const SHIFT_FIELDS = ['name', 'start_time', 'end_time', 'grace_minutes', 'early_exit_grace', 'half_day_minutes', 'full_day_minutes', 'weekly_off', 'ot_enabled'];
+  const SHIFT_FIELDS = ['name', 'start_time', 'end_time', 'grace_minutes', 'early_exit_grace', 'half_day_minutes', 'full_day_minutes', 'weekly_off', 'ot_enabled',
+    'first_half_end', 'second_half_start', 'half_late_minutes'];
 
   function validateShift(s) {
     if (!String(s.name || '').trim()) throw bad('Shift name is required');
     if (!HHMM.test(s.start_time) || !HHMM.test(s.end_time)) throw bad('Times must be HH:MM (24h)');
     if (s.weekly_off != null && !/^([0-6](,[0-6])*)?$/.test(String(s.weekly_off))) throw bad('weekly_off must be weekday numbers like "0" or "0,6" (0 = Sunday)');
+    const h1 = s.first_half_end || null;
+    const h2 = s.second_half_start || null;
+    if (!h1 !== !h2) throw bad('Set both "First half ends at" and "Second half starts at", or neither');
+    if (h1) {
+      if (!HHMM.test(h1) || !HHMM.test(h2)) throw bad('Half-day times must be HH:MM (24h)');
+      const info = shiftInfo(s);
+      for (const [label, v] of [['First half ends at', info.halves.firstEnd], ['Second half starts at', info.halves.secondStart]]) {
+        if (v <= info.startMin || v >= info.endMin) throw bad(`"${label}" must be between the shift start and end`);
+      }
+    }
+    if (s.half_late_minutes != null && !(Number.isInteger(Number(s.half_late_minutes)) && Number(s.half_late_minutes) >= 0)) {
+      throw bad('Late allowance for the first half must be a whole number of minutes');
+    }
   }
 
   r.get('/shifts', (req, res) => res.json(db.prepare('SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id = s.id) AS employees FROM shifts s ORDER BY id').all()));
