@@ -1,9 +1,10 @@
 'use strict';
 
 const path = require('node:path');
+const { appRoot, isSea } = require('./runtime');
 
 try {
-  process.loadEnvFile(path.join(__dirname, '..', '.env'));
+  process.loadEnvFile(path.join(appRoot, '.env'));
 } catch {
   // .env is optional
 }
@@ -33,7 +34,9 @@ module.exports = {
   timezone: process.env.TZ,
   port: Number(env.PORT) || 3000,
   host: env.HOST || '0.0.0.0',
-  dbPath: env.DB_PATH || path.join(__dirname, '..', 'data', 'attendance.db'),
+  dbPath: env.DB_PATH || path.join(appRoot, 'data', 'attendance.db'),
+  // Open the browser when the .exe starts (OPEN_BROWSER=false to turn off)
+  openBrowser: bool(env.OPEN_BROWSER, isSea),
 
   adminUser: env.ADMIN_USER || 'admin',
   adminPassword: env.ADMIN_PASSWORD || 'admin123',

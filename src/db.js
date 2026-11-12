@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const Database = require('better-sqlite3');
+const { openDatabase } = require('./sqlite');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (
@@ -205,7 +205,7 @@ function migrate(db) {
 
 function open(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
+  const db = openDatabase(file);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);

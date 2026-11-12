@@ -33,8 +33,34 @@ A complete illustrated guide (features, screen tour, attendance rules, setup, wh
 
 ## Requirements
 
-- Node.js **20.12 or newer** (Windows, Linux or macOS)
+- Node.js **22 or newer** recommended: it has SQLite built in, so nothing needs compiling. Node 20.12+ also
+  works but then installs the `better-sqlite3` module, which must be compiled or downloaded for your system.
 - Network access from the server to the devices (pull mode) or from the devices to the server (push mode)
+
+## Windows program (.exe)
+
+For a single Windows PC there is no need to install Node.js:
+
+1. Unzip `essl-attendance-windows.zip` to a permanent folder, e.g. `C:\essl-attendance`.
+2. Double-click `essl-attendance.exe`. A console window opens and the browser shows the app at
+   `http://localhost:3000` (sign in with `admin` / `admin123`, then change the password).
+3. Keep the console window open while the app is in use; closing it stops the app.
+
+Data is kept in the `data` folder next to the `.exe` (back it up). An optional `.env` next to the `.exe`
+changes settings (rename `.env.example`). The program is unsigned, so Windows SmartScreen asks once
+(*More info → Run anyway*), and Windows Firewall asks to allow network access (allow *Private networks* so
+machines and other PCs can reach it). `README-Windows.txt` in the zip has the details.
+
+**Building it** (on any OS with Node 22+ and curl, internet access to nodejs.org):
+
+```bash
+npm install
+npm run build:exe          # dist/essl-attendance.exe, dist/essl-attendance-windows.zip
+```
+
+The script bundles the app with esbuild, packs it and the web UI into a Node *single executable application*
+blob, downloads the official `node.exe` of the same Node version from nodejs.org (SHA-256 checked), removes its
+signature and injects the blob. On Linux it also builds `dist/essl-attendance-linux-x64` for testing.
 
 ## Install and run
 
@@ -75,8 +101,9 @@ recommended.
 6. On each device: **Comm. → Cloud Server Setting** → server address `attendance.yourcompany.com`, port `80`,
    HTTPS off, then approve the device on the **Devices** page.
 
-Shared hosting stops idle Node apps; that is fine for push mode because each device upload wakes it up. If
-**Run NPM Install** fails while building `better-sqlite3`, the plan cannot run native modules — use Option B.
+Shared hosting stops idle Node apps; that is fine for push mode because each device upload wakes it up. With
+Node 22 or newer selected, the built-in SQLite is used and nothing has to compile. On Node 20, *Run NPM Install*
+must build `better-sqlite3`; if that fails, choose Node 22 (or use Option B).
 
 ### Option B – GoDaddy VPS / dedicated server (recommended)
 

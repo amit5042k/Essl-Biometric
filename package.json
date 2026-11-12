@@ -9,14 +9,21 @@
     "dev": "node --watch src/server.js",
     "test": "node --test \"test/**/*.test.js\"",
     "simulate:zk": "node tools/zk-simulator.js",
-    "simulate:adms": "node tools/adms-simulator.js"
+    "simulate:adms": "node tools/adms-simulator.js",
+    "build:exe": "node tools/build-exe.js"
   },
   "engines": {
     "node": ">=20.12"
   },
   "license": "MIT",
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
     "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.11.1"
   }
 }

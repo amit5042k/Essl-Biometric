@@ -4,7 +4,7 @@ const { normalizeTimestamp } = require('../util/time');
 
 /**
  * Stores attendance logs and creates placeholder employees for unknown codes.
- * @param {import('better-sqlite3').Database} db
+ * @param {ReturnType<import('../sqlite').openDatabase>} db
  * @param {number|null} deviceId
  * @param {{userId:string,timestamp:string,punchState?:number,verifyType?:number}[]} logs
  * @returns {number} number of new punches
